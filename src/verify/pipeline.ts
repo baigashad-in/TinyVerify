@@ -4,6 +4,7 @@ import { discoveryQuery, genericNormalizeStatus, pickOfficial, usesMonthFirstDat
 import { getAdapter, jurisdictionLabel, route, type Route } from "../registries/index.js";
 import {
   emptyRecord,
+  looksBlocked,
   type ParseOutcome,
   type ParsedRecord,
   type RegistryAdapter,
@@ -25,7 +26,7 @@ import {
   type VerifyResult,
 } from "../types.js";
 import { toIsoDate, type DateOrder } from "../util/dates.js";
-import { decide, identifierNameCheck, MATCH_THRESHOLDS, nameScore, nameVariants, type Scored } from "../util/match.js";
+import { decide, identifierNameCheck, MATCH_THRESHOLDS, nameScore, nameVariants, requestCoverage, type Scored } from "../util/match.js";
 import { hostOf, isOnDomains, sha256, truncate } from "../util/text.js";
 
 export interface PipelineDeps {
@@ -76,6 +77,11 @@ function check(ctx: Ctx, adapter: RegistryAdapter, c: Omit<SourceCheck, "registr
   ctx.checks.push({ registry_id: adapter.id, registry_name: adapter.name, checked_at: ctx.now().toISOString(), ...c });
 }
 
+/** Errors that stop the whole request: a bad key or an empty wallet fails every later call too. */
+function isFatal(err: unknown): boolean {
+  return err instanceof TinyVerifyError && (err.code === "tinyfish_auth" || err.code === "tinyfish_billing");
+}
+
 function str(v: unknown): string | null {
   return typeof v === "string" && v.trim().length > 0 ? v.trim() : null;
 }
@@ -83,6 +89,27 @@ function str(v: unknown): string | null {
 /** Array entries that are objects. Agent output can contain nulls; they are dropped, not crashed on. */
 function objects(v: unknown): Record<string, unknown>[] {
   return Array.isArray(v) ? v.filter((x): x is Record<string, unknown> => !!x && typeof x === "object" && !Array.isArray(x)) : [];
+}
+
+/** Labelled name fields an agent copies from the page ("Entity name", "Company name", ...). */
+const NAME_FIELD = /^(entity|legal|registered|company|corporate|corporation|business|licensee|registrant|practitioner|full)_name$/;
+/** Words that mark a page title or heading ("ABN Lookup Record") rather than a registered name. */
+const TITLE_WORDS = /\b(lookup|record|search results?|details for|overview)\b/i;
+const LEGAL_SUFFIX = /\b(ltd|limited|plc|llc|llp|inc|incorporated|corp|corporation|pty|co|company|lp)\.?$/i;
+
+/**
+ * The record's name. A labelled name field copied from the page wins over the
+ * free "name" answer when they differ, because agents sometimes put the page
+ * heading there (a live run on ABN Lookup returned "ABN Lookup Record").
+ */
+function recordName(answer: string | null, details: Record<string, string>): string | null {
+  const labelled = Object.entries(details).find(([k]) => NAME_FIELD.test(k))?.[1] ?? null;
+  if (labelled && (!answer || answer !== labelled)) {
+    if (answer && answer !== labelled) details.agent_name_answer = answer;
+    return labelled;
+  }
+  if (answer && TITLE_WORDS.test(answer) && !LEGAL_SUFFIX.test(answer) && answer.split(/\s+/).length <= 4) return null;
+  return answer;
 }
 
 /** Convert an Agent structured-output record into the same shape the parsers produce. */
@@ -137,7 +164,7 @@ export function agentRecordToParsed(
   return {
     ok: true,
     record: emptyRecord({
-      name: str(result.name),
+      name: recordName(str(result.name), details),
       identifier: identifier ? (opts.normalizeId(identifier) ?? identifier) : null,
       identifiers: identifier ? { identifier } : {},
       status_raw: statusText,
@@ -160,7 +187,13 @@ export async function readRecord(
   adapter: RegistryAdapter,
   ctx: Pick<Ctx, "gw" | "checks" | "now" | "warnings">,
   ref: { id: string | null; url: string | null; nameHint?: string | null },
-  opts: { skipFetch?: boolean } = {},
+  opts: {
+    skipFetch?: boolean;
+    /** The caller already has the default Fetch text (a Monitor run) and it did not parse. */
+    skipDefaultFetch?: boolean;
+    /** Stop after Fetch (Agent escalation is turned off). */
+    noAgent?: boolean;
+  } = {},
 ): Promise<ReadResult> {
   const canonical = ref.id ? adapter.recordUrl(ref.id) : null;
   const candidateUrl = ref.url && isOnDomains(ref.url, adapter.officialDomains) ? ref.url : null;
@@ -168,39 +201,53 @@ export async function readRecord(
   const c = (x: Omit<SourceCheck, "registry_id" | "registry_name" | "checked_at">) =>
     ctx.checks.push({ registry_id: adapter.id, registry_name: adapter.name, checked_at: ctx.now().toISOString(), ...x });
 
-  if (url && adapter.curated !== false && !opts.skipFetch) {
-    try {
-      const f = await ctx.gw.fetchPage(url);
-      if (f.page?.text) {
-        const p = adapter.parseRecord(f.page);
-        if (p.ok) {
-          const pid = p.record.identifier ? adapter.normalizeIdentifier(p.record.identifier) : null;
-          if (ref.id && pid && pid !== ref.id) {
-            c({ step: "record", method: "tinyfish_fetch", url, query: ref.id, outcome: "unparsed", result_count: null, detail: `page shows ${pid}, expected ${ref.id}` });
+  // Fetch first (free daily allowance, about 1-5 s), Agent last (paid, 1-5 min).
+  // The default Fetch extraction keeps the "main content" and can drop record
+  // tables, so a page that fetched fine but did not parse is fetched once more
+  // as the whole page before the Agent is used.
+  const modes: ("default" | "full")[] = opts.skipFetch ? [] : opts.skipDefaultFetch ? ["full"] : ["default", "full"];
+  if (url && adapter.curated !== false) {
+    for (const mode of modes) {
+      const detailPrefix = mode === "full" ? "whole page: " : "";
+      let retry = false;
+      try {
+        const f = await ctx.gw.fetchPage(url, mode === "full" ? { fullPage: true } : {});
+        if (f.page?.text) {
+          const p = adapter.parseRecord(f.page);
+          if (p.ok) {
+            const pid = p.record.identifier ? adapter.normalizeIdentifier(p.record.identifier) : null;
+            if (ref.id && pid && pid !== ref.id) {
+              c({ step: "record", method: "tinyfish_fetch", url, query: ref.id, outcome: "unparsed", result_count: null, detail: `${detailPrefix}page shows ${pid}, expected ${ref.id}` });
+            } else {
+              c({ step: "record", method: "tinyfish_fetch", url, query: ref.id, outcome: "ok", result_count: 1, detail: mode === "full" ? "whole page" : null });
+              return { ok: true, parsed: p.record, via: "tinyfish_fetch", url, recordSpecific: true, page: f.page, runId: null };
+            }
           } else {
-            c({ step: "record", method: "tinyfish_fetch", url, query: ref.id, outcome: "ok", result_count: 1, detail: null });
-            return { ok: true, parsed: p.record, via: "tinyfish_fetch", url, recordSpecific: true, page: f.page, runId: null };
+            c({
+              step: "record",
+              method: "tinyfish_fetch",
+              url,
+              query: ref.id,
+              outcome: p.notFound ? "not_found" : p.blocked ? "blocked" : "unparsed",
+              result_count: p.notFound ? 0 : null,
+              detail: detailPrefix + p.reason,
+            });
+            if (p.notFound) return { ok: false, notFound: true, blocked: false, reason: p.reason };
+            // A bot wall looks the same as a whole page, so only a parse miss is retried.
+            retry = !p.blocked;
           }
         } else {
-          c({
-            step: "record",
-            method: "tinyfish_fetch",
-            url,
-            query: ref.id,
-            outcome: p.notFound ? "not_found" : p.blocked ? "blocked" : "unparsed",
-            result_count: p.notFound ? 0 : null,
-            detail: p.reason,
-          });
-          if (p.notFound) return { ok: false, notFound: true, blocked: false, reason: p.reason };
+          c({ step: "record", method: "tinyfish_fetch", url, query: ref.id, outcome: "error", result_count: null, detail: detailPrefix + (f.error ?? "no text") });
         }
-      } else {
-        c({ step: "record", method: "tinyfish_fetch", url, query: ref.id, outcome: "error", result_count: null, detail: f.error });
+      } catch (err) {
+        if (isFatal(err)) throw err;
+        c({ step: "record", method: "tinyfish_fetch", url, query: ref.id, outcome: "error", result_count: null, detail: detailPrefix + (err instanceof Error ? err.message : String(err)) });
       }
-    } catch (err) {
-      if (err instanceof TinyVerifyError && err.code === "tinyfish_auth") throw err;
-      c({ step: "record", method: "tinyfish_fetch", url, query: ref.id, outcome: "error", result_count: null, detail: err instanceof Error ? err.message : String(err) });
+      if (!retry) break;
     }
   }
+
+  if (opts.noAgent) return { ok: false, notFound: false, blocked: false, reason: "Fetch could not read the record and Agent escalation is off" };
 
   // Agent fallback: real browser, structured output, verbatim evidence.
   const searchUrl = adapter.search.mode === "agent" ? adapter.search.url : adapter.search.agentFallbackUrl;
@@ -223,7 +270,7 @@ export async function readRecord(
       proxy_country: adapter.agent.proxyCountry,
     });
   } catch (err) {
-    if (err instanceof TinyVerifyError && err.code === "tinyfish_auth") throw err;
+    if (isFatal(err)) throw err;
     const reason = err instanceof Error ? err.message : String(err);
     c({ step: "record", method: "tinyfish_agent", url: agentUrl, query: ref.id, outcome: "error", result_count: null, detail: reason });
     return { ok: false, notFound: false, blocked: false, reason };
@@ -291,7 +338,7 @@ async function agentSearch(adapter: RegistryAdapter, ctx: Ctx, query: string, ur
       proxy_country: adapter.agent.proxyCountry,
     });
   } catch (err) {
-    if (err instanceof TinyVerifyError && err.code === "tinyfish_auth") throw err;
+    if (isFatal(err)) throw err;
     const reason = err instanceof Error ? err.message : String(err);
     check(ctx, adapter, { step: "search", method: "tinyfish_agent", url, query, outcome: "error", result_count: null, detail: reason });
     return { kind: "unavailable", reason };
@@ -334,33 +381,41 @@ async function searchCandidates(adapter: RegistryAdapter, ctx: Ctx, query: strin
   if (adapter.search.mode === "fetch") {
     const spec = adapter.search;
     const url = spec.url(query, ctx.kind);
-    try {
-      const f = await ctx.gw.fetchPage(url);
-      if (f.page?.text) {
-        const sp = spec.parse(f.page);
-        if (sp.kind === "results") {
-          check(ctx, adapter, { step: "search", method: "tinyfish_fetch", url, query, outcome: "ok", result_count: sp.candidates.length, detail: sp.total ? `registry reports ${sp.total} matches` : null });
-          return { kind: "results", candidates: sp.candidates, total: sp.total };
+    // Same order as records: default Fetch, whole-page Fetch if the results did not parse, then Agent.
+    for (const mode of ["default", "full"] as const) {
+      const prefix = mode === "full" ? "whole page: " : "";
+      let retry = false;
+      try {
+        const f = await ctx.gw.fetchPage(url, mode === "full" ? { fullPage: true } : { links: true });
+        if (f.page?.text) {
+          const sp = spec.parse(f.page);
+          if (sp.kind === "results") {
+            const total = sp.total ? `registry reports ${sp.total} matches` : null;
+            check(ctx, adapter, { step: "search", method: "tinyfish_fetch", url, query, outcome: "ok", result_count: sp.candidates.length, detail: [mode === "full" ? "whole page" : null, total].filter(Boolean).join("; ") || null });
+            return { kind: "results", candidates: sp.candidates, total: sp.total };
+          }
+          if (sp.kind === "no_results" && spec.noResultsIsConclusive) {
+            check(ctx, adapter, { step: "search", method: "tinyfish_fetch", url, query, outcome: "no_results", result_count: 0, detail: prefix + sp.evidence });
+            return { kind: "no_results" };
+          }
+          check(ctx, adapter, {
+            step: "search",
+            method: "tinyfish_fetch",
+            url,
+            query,
+            outcome: sp.kind === "no_results" ? "no_results" : "unparsed",
+            result_count: sp.kind === "no_results" ? 0 : null,
+            detail: prefix + (sp.kind === "no_results" ? "not conclusive on this registry; confirming with TinyFish Agent" : sp.reason),
+          });
+          retry = sp.kind === "unparsed" && !looksBlocked(f.page.text);
+        } else {
+          check(ctx, adapter, { step: "search", method: "tinyfish_fetch", url, query, outcome: "error", result_count: null, detail: prefix + (f.error ?? "no text") });
         }
-        if (sp.kind === "no_results" && spec.noResultsIsConclusive) {
-          check(ctx, adapter, { step: "search", method: "tinyfish_fetch", url, query, outcome: "no_results", result_count: 0, detail: sp.evidence });
-          return { kind: "no_results" };
-        }
-        check(ctx, adapter, {
-          step: "search",
-          method: "tinyfish_fetch",
-          url,
-          query,
-          outcome: sp.kind === "no_results" ? "no_results" : "unparsed",
-          result_count: sp.kind === "no_results" ? 0 : null,
-          detail: sp.kind === "no_results" ? "not conclusive on this registry; confirming with TinyFish Agent" : sp.reason,
-        });
-      } else {
-        check(ctx, adapter, { step: "search", method: "tinyfish_fetch", url, query, outcome: "error", result_count: null, detail: f.error });
+      } catch (err) {
+        if (isFatal(err)) throw err;
+        check(ctx, adapter, { step: "search", method: "tinyfish_fetch", url, query, outcome: "error", result_count: null, detail: prefix + (err instanceof Error ? err.message : String(err)) });
       }
-    } catch (err) {
-      if (err instanceof TinyVerifyError && err.code === "tinyfish_auth") throw err;
-      check(ctx, adapter, { step: "search", method: "tinyfish_fetch", url, query, outcome: "error", result_count: null, detail: err instanceof Error ? err.message : String(err) });
+      if (!retry) break;
     }
     return agentSearch(adapter, ctx, query, spec.agentFallbackUrl, spec.agentInstructions(query, ctx.kind));
   }
@@ -492,7 +547,7 @@ async function verifyWithAdapter(adapter: RegistryAdapter, ctx: Ctx): Promise<Ad
     answered = true;
     if (sr.kind === "no_results") continue;
 
-    const scored = sr.candidates.map((c) => ({ item: c, score: nameScore(req.name, c.name, ctx.kind) }));
+    const scored = sr.candidates.map((c) => ({ item: c, score: nameScore(req.name, c.name, ctx.kind), coverage: requestCoverage(req.name, c.name, ctx.kind) }));
     if (sr.total && sr.total > sr.candidates.length) {
       ctx.warnings.push(`${adapter.name} reported ${sr.total} matches for "${variant}"; only the first ${sr.candidates.length} were compared. Use the identifier for certainty.`);
     }
@@ -636,11 +691,11 @@ async function verifyWithDiscovery(ctx: Ctx, rt: Route, place: string = ctx.req.
   try {
     hits = await ctx.gw.search({ query, purpose: `Find the official government registry or licensing board for ${ctx.req.record_type} in ${place}` });
   } catch (err) {
-    if (err instanceof TinyVerifyError && err.code === "tinyfish_auth") throw err;
+    if (isFatal(err)) throw err;
     check(ctx, pseudo, { step: "discover", method: "tinyfish_search", url: null, query, outcome: "error", result_count: null, detail: err instanceof Error ? err.message : String(err) });
     return { adapter: null, outcome: "source_unavailable", records: [], candidates: [], message: "Registry discovery search failed." };
   }
-  const { chosen, rejected } = pickOfficial(hits);
+  const { chosen, rejected } = pickOfficial(hits, rt.recordType === "business_registration" ? "business" : "licence");
   check(ctx, pseudo, {
     step: "discover",
     method: "tinyfish_search",
