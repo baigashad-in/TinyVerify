@@ -42,7 +42,7 @@ export interface ProcessResult {
   ignored: null | "unknown_monitor" | "baseline" | "duplicate" | "deleted";
   events: ChangeEvent[];
   record: VerifiedRecord | null;
-  read_via: "tinyfish_monitor" | "tinyfish_monitor+agent" | null;
+  read_via: "tinyfish_monitor" | "tinyfish_monitor+fetch" | "tinyfish_monitor+agent" | null;
   tinyfish_calls: TinyFishCall[];
 }
 
@@ -286,17 +286,21 @@ export class MonitorService {
       hash === watch.last_stable_hash &&
       watch.last_unreadable_at === null &&
       skips < MAX_AGENT_SKIPS;
-    if (!parsed && this.opts.agentEscalation && !unchangedUnreadable) {
+    // Escalation when the Monitor page did not parse: a whole-page Fetch first
+    // (free; the default extraction can drop record tables), then the Agent.
+    // A bot wall skips the Fetch step, since it would show the same wall.
+    const blockedPage = !!page?.text && !!looksBlocked(page.text);
+    if (!parsed && !unchangedUnreadable && (!blockedPage || this.opts.agentEscalation)) {
       const id = watch.identifier ? adapter.normalizeIdentifier(watch.identifier) : null;
       const r = await readRecord(
         adapter,
         { gw, checks: [], warnings: [], now: this.now },
         { id, url: watch.record_url, nameHint: watch.subject_name },
-        { skipFetch: true },
+        { skipFetch: blockedPage, skipDefaultFetch: !blockedPage, noAgent: !this.opts.agentEscalation },
       );
       if (r.ok) {
         parsed = r.parsed;
-        via = "tinyfish_monitor+agent";
+        via = r.via === "tinyfish_agent" ? "tinyfish_monitor+agent" : "tinyfish_monitor+fetch";
         agentRunId = r.runId;
       }
     }

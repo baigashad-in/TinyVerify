@@ -31,7 +31,7 @@ export const ChangeEventSchema = z.object({
   after: z.unknown(),
   message: z.string(),
   source_url: z.string(),
-  read_via: z.enum(["tinyfish_monitor", "tinyfish_monitor+agent"]),
+  read_via: z.enum(["tinyfish_monitor", "tinyfish_monitor+fetch", "tinyfish_monitor+agent"]),
   record: VerifiedRecordSchema.nullable(),
 });
 export type ChangeEvent = z.infer<typeof ChangeEventSchema>;
