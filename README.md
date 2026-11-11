@@ -89,7 +89,7 @@ Example outputs, built from fictional test fixtures to show the shape: [`samples
 
 | Endpoint | What it does in TinyVerify |
 | :-- | :-- |
-| **Fetch** | Reads registry pages live (`ttl: 0`, markdown). Used for record pages with a stable URL (Companies House, ABN Lookup, GMC, CSLB, Corporations Canada) and for GET search pages (Companies House, ABN Lookup). A deterministic parser per registry turns the page into fields and keeps the exact lines it used as evidence. |
+| **Fetch** | Reads registry pages live (`ttl: 0`, markdown). Used for record pages with a stable URL (Companies House, ABN Lookup, GMC, CSLB, Corporations Canada) and for GET search pages (Companies House, ABN Lookup). A deterministic parser per registry turns the page into fields and keeps the exact lines it used as evidence. Fetch's default "main content" extraction can drop result lists and record tables, so a page that loads but does not parse is fetched once more as the whole page (`include_selectors: ["body"]`) before the Agent is used. |
 | **Agent** | Handles everything Fetch cannot: search forms (GMC, CSLB, Corporations Canada, Sunbiz), bot-protected pages (stealth browser, local proxy country), and any page the parser cannot read. Runs use `output_schema` so results come back as typed JSON with a verbatim `evidence_quote`, and a `page_state` field so a CAPTCHA or error page is reported as unavailable instead of "not found". |
 | **Search** | Finds the official registry for places without a curated adapter (for example a Texas nursing licence). Only government domains and known statutory regulators pass; aggregators like OpenCorporates are rejected. If no official source is found, the answer is `unsupported`, never a third-party site. |
 | **Monitor** | `POST /watch` verifies a record, then creates a Page Monitor on the record's own URL with a plain-English `purpose` and a webhook. Each scheduled run posts the fresh page to `/webhooks/tinyfish`. TinyVerify parses it, compares fields with the last known record and raises typed change events. |
@@ -98,7 +98,7 @@ Not used: the Browser API. Agent covers the interactive work, so adding Browser 
 
 ### Fetch first, Agent second
 
-For each record TinyVerify tries the cheap, exact path first: TinyFish Fetch plus a parser. If the page cannot be parsed (layout change, bot wall, redirect to a search form), it falls back to TinyFish Agent on the same official URL. The result says which path produced it (`extraction: deterministic_parser` or `agent_structured_output`), so a reviewer knows how much to trust it.
+For each record TinyVerify tries the cheap, exact path first: TinyFish Fetch plus a parser (a few seconds; TinyFish documents Fetch as free up to 1,000 URLs a day). If the default page does not parse, it fetches the whole page and tries again. Only then does it fall back to TinyFish Agent on the same official URL (in the first live run, Agent runs took 1 to 5 minutes and need wallet credit). A bot wall skips the second Fetch. The result says which path produced it (`extraction: deterministic_parser` or `agent_structured_output`), so a reviewer knows how much to trust it.
 
 ## Matching and ambiguity
 
@@ -110,7 +110,7 @@ TinyVerify only picks a record when the evidence is clear:
 4. One exact match, or one strong match well ahead of the rest, is opened. The record page must show the same entity (same number, or the same name as the search row) and a name that matches the request. Otherwise the answer is `name_mismatch`. A search row alone is never treated as proof. One exception, with a warning: when the register's own search tied the name to that number and the record shows the same number but another holder name (CSLB lists a person under the licence of the business they work for).
 5. If any name form could not be searched (bot wall, error), the answer is `source_unavailable`, not `no_match`, because the unread form may be the one the register needs.
 6. Two or more exact or close matches: **multiple_matches**, with every candidate's name, number, status and link. Nothing is chosen.
-7. Only weak matches: **no_match**, with near misses shown and scored.
+7. Only weak matches: **no_match**, with near misses shown and scored. A candidate must contain at least 75% of the requested words to count as a possible match, so "WIDGET WORKS LIMITED" is a near miss for "Zqxv Imaginary Widget Works Ltd", not a match.
 8. Matches on a company's previous name, and result pages that list more matches than were compared, are reported in `warnings`.
 
 Short name parts must match exactly ("Jon" is not "John"), because a one-letter difference in a short name is often a different person.
@@ -138,9 +138,9 @@ TinyFish scheduled run -> POST /webhooks/tinyfish?token=... -> parse -> diff fie
 * **Bot walls.** If Monitor's page cannot be parsed, TinyVerify re-reads the record with TinyFish Agent (`read_via: tinyfish_monitor+agent`). If that also fails, it raises one `record_unreadable` warning and keeps the last known status, then `record_recovered` when reading works again.
 * **Registries found by Search** have no parser, so each check needs an Agent read. To save cost, the Agent is skipped while the Monitor page is unchanged, but never when the page is a bot wall or nearly empty, and never more than 6 runs in a row.
 * **Safe webhooks.** The webhook URL carries a secret token (TinyFish does not sign payloads). Baseline runs, duplicate deliveries and unknown monitors are ignored.
-* **On demand.** `POST /watches/:id/recheck` uses TinyFish Monitor "run now" and processes the result immediately. Useful for demos and when the server has no public URL.
+* **On demand.** `POST /watches/:id/recheck` (CLI: `npm run cli -- recheck <watch id>`) uses TinyFish Monitor "run now" and processes the result immediately. Useful for demos and when the server has no public URL. `npm run cli -- unwatch <watch id>` stops a watch and deletes its TinyFish Monitor.
 
-Monitor is in beta and enabled per TinyFish account. If your key gets a 403, ask TinyFish support to enable Monitor.
+Monitor is in beta and enabled per TinyFish account. If your key gets a 403, ask TinyFish support to enable Monitor. Confirmed live on 11 Nov 2026: creating a Monitor on a Companies House record, then a run-now recheck, read the page with the parser and correctly reported no change.
 
 ## API
 
@@ -172,8 +172,9 @@ Set `TINYVERIFY_API_TOKEN` to require `Authorization: Bearer <token>` on every r
 
 ## Known limits
 
+* **Fetch output was not seen when the parsers were written.** The first live run (11 Nov 2026) showed Companies House search pages and ABN Lookup pages not parsing from Fetch's default Markdown, so those runs fell back to the Agent. The whole-page retry and a link-free Companies House parser were added for this, but have not yet been confirmed live. `npm run dump` saves the real Fetch output and reports whether each parser reads it.
 * **Layouts change.** Parsers are written against each registry's field labels as seen in November 2026. When a layout changes, reads fall back to TinyFish Agent and keep working, marked `agent_structured_output`. Add a fixture and update the parser to get back to the deterministic path.
-* **Agent extraction is model based.** It is constrained by a schema, must report the record number when one was requested, and links off the official domain are dropped. Its quotes are not checked against the page, so for high-stakes decisions open `source.url` and confirm.
+* **Agent extraction is model based.** It is constrained by a schema, must report the record number when one was requested, and links off the official domain are dropped. In one live run the Agent returned the page heading "ABN Lookup Record" as the name; a labelled name field ("Entity name") from the same answer now takes priority, and the agent's own answer is kept in `details.agent_name_answer`. Its quotes are not checked against the page, so for high-stakes decisions open `source.url` and confirm.
 * **Place names are read by rules.** Countries beat states, states beat cities, and the last place in the text wins a tie. The chosen reading is shown in `warnings` when another was possible. US date order (month first) is used for `.gov` and `.us` hosts and US state names, which reads a country such as Georgia wrongly.
 * **Monitor webhook shape.** The webhook receiver accepts the documented payload (`fetch_monitor_id`, `id`, `results`) and a few likely variants. Payloads it cannot match are logged and acknowledged with 202, not processed.
 * **Corporations Canada is federal only.** Provincially incorporated companies are in provincial registries; the no-match message says so.
@@ -181,21 +182,23 @@ Set `TINYVERIFY_API_TOKEN` to require `Authorization: Bearer <token>` on every r
 * **Sunbiz** is behind bot protection, so reads and Monitor checks use TinyFish Agent, which costs more per check than Fetch.
 * **ABN Lookup** name search may show active ABNs only. Search by ABN to check a cancelled one.
 * **First page only.** Only the first page of search results is compared; a warning says when the registry reports more.
-* **Discovered registries** pass an official-domain check but are not hand-verified; they carry a warning and `curated: false`.
+* **Discovered registries** pass an official-domain check but are not hand-verified; they carry a warning and `curated: false`. Among official results, register-search pages are preferred over forms, tax and letter pages (a live run first picked a California tax-letter page).
+* **TinyFish credit.** Agent runs need wallet credit. When TinyFish reports an empty wallet, TinyVerify stops the request at once and says so, instead of trying every registry and name form.
 * This is a lookup tool, not legal advice.
 
 ## Privacy
 
 * No personal data is committed. Every person and small business in the test fixtures is invented, with invented addresses and numbers from ranges the registers have not issued (see `test/fixtures/README.md`). The only real entities are two large listed companies, Tesco PLC and Woolworths Group Limited.
-* `data/` (watched records) and `samples/live-*` (live results) are git-ignored. Person registers are opt-in in the smoke test.
+* `data/` (watched records), `samples/live-*` (live results) and `samples/raw/` (page dumps) are git-ignored. Person registers are opt-in in the smoke test.
 
 ## Development
 
 ```bash
-npm test            # 81 tests: parsers, matching, routing, pipeline outcomes, Monitor diffing, webhooks, API, regressions
+npm test            # 92 tests: parsers, matching, routing, pipeline outcomes, Monitor diffing, webhooks, API, regressions, live-run fixes
 npm run typecheck
 npm run examples    # regenerate samples/fixture-examples from fixtures
 npm run smoke       # live checks through TinyFish (needs TINYFISH_API_KEY); SMOKE_MONITOR=1 also tests Monitor
+npm run dump        # save TinyFish Fetch output for registry pages to samples/raw/ and test the parsers on it (Fetch only)
 ```
 
 Tests use a fake TinyFish gateway (`test/helpers.ts`) so they run offline. `src/tinyfish/gateway.ts` is the only file that talks to TinyFish, through the official `@tiny-fish/sdk`.

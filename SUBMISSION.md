@@ -14,7 +14,7 @@
 
 | Criterion | How TinyVerify handles it |
 | :-- | :-- |
-| Accuracy | Live reads (`ttl: 0`) of the official page; deterministic parsers keep verbatim evidence lines; the page must show the requested number (Agent results without it are rejected); the opened record must match the chosen search row and the request; ABN check digit |
+| Accuracy | Live reads (`ttl: 0`) of the official page, with a whole-page re-read before any Agent fallback; deterministic parsers keep verbatim evidence lines; the page must show the requested number (Agent results without it are rejected); the opened record must match the chosen search row and the request; ABN check digit |
 | Coverage | 6 curated registries, 3 record types, 4 countries; discovery for other places |
 | Ambiguity | `multiple_matches`, `no_match` with scored near misses, `name_mismatch`, "CA" checked as both Canada and California, longer place names read with a disclosed assumption, name variants and previous names; an unread name form gives `source_unavailable`, never `no_match` |
 | Monitor reliability | Field diff ignores timestamp noise; flags and actions compared only between reads of the same kind, so switching between Fetch and Agent raises no false alerts; Agent escalation behind bot walls; forced Agent re-reads for registries found by Search; one `record_unreadable` alert then `record_recovered`; dedupe and token check |
@@ -24,14 +24,29 @@
 
 Fetch (record and search pages), Agent (search forms, bot-protected pages, parser fallback), Search (finding official registries for uncovered places), Monitor (scheduled page checks with webhooks). Browser is not used.
 
+## First live run (11 Nov 2026, v2) and what changed in v3
+
+| Case | v2 result | Right? | v3 change |
+| :-- | :-- | :-- | :-- |
+| Tesco PLC by number | verified, Fetch only, 3 s | yes | none |
+| Rolls-Royce Holdings plc by name | verified, but the search needed a 4 min Agent run | yes, slow | search page fetched again as the whole page; link-free result parser |
+| Made-up company name | multiple_matches | no, should be no_match | a candidate must contain 75% of the requested words |
+| Woolworths ABN by number | name_mismatch | no | Agent's labelled "Entity name" beats its page-heading answer |
+| Woolworths by name | verified, name shown as "ABN Lookup Record" | record right, name wrong | same as above |
+| Canadian National Railway by name | verified, annual filing overdue flag | yes | none |
+| "CA", Sunbiz, New York | wallet empty, not run | n/a | stops at the first billing error with a clear message |
+
+ABN Lookup record pages also did not parse from Fetch's default Markdown in v2. v3 retries them as the whole page before using the Agent. This is not yet confirmed live.
+
 ## Before you submit
 
-1. Run `npm test` (should be 81 passing).
-2. Run `npm run smoke` with your key and read `samples/live-<date>/summary.json`. Open each `source.url` and compare status and numbers by hand.
-3. Run `SMOKE_MONITOR=1 npm run smoke` once Monitor is enabled on your account.
-4. Start the server with a public `PUBLIC_BASE_URL` (a tunnel is fine), watch one record, and wait for one scheduled run. If the server log shows "TinyFish webhook ignored", the payload shape differs from the docs; map the logged keys in `handleWebhook` (`src/monitor/service.ts`).
-5. Things not yet confirmed live: the ABN Lookup name-search URL (`/Search/ResultsActive`), whether Sunbiz detail links stay valid, and how GMC and CSLB pages render through Fetch. Each falls back to TinyFish Agent if wrong, but check the `extraction` field in the smoke output.
-6. Post on LinkedIn tagging TinyFish, and share in #showcase on the TinyFish Discord.
+1. Run `npm test` (should be 92 passing).
+2. Run `npm run dump` (Fetch only, inside TinyFish's free daily Fetch allowance). It prints whether each parser reads the real Fetch output, for the default and the whole-page version. If a line says a parser failed, send the matching file from `samples/raw/`.
+3. Add TinyFish credit if the wallet is empty, then run `npm run smoke` and read `samples/live-<date>/summary.json`. Each line now shows the `expected` outcome. Open each `source.url` and compare status and numbers by hand.
+4. Monitor create and run-now were confirmed live on 11 Nov 2026 (Tesco watch, no change reported). Run `SMOKE_MONITOR=1 npm run smoke` for the full create, recheck and delete cycle.
+5. Start the server with a public `PUBLIC_BASE_URL` (a tunnel is fine), watch one record, and wait for one scheduled run. If the server log shows "TinyFish webhook ignored", the payload shape differs from the docs; map the logged keys in `handleWebhook` (`src/monitor/service.ts`).
+6. Still not confirmed live: the ABN Lookup name-search URL (`/Search/ResultsActive`), whether the whole-page Fetch fixes Companies House search and ABN Lookup pages, whether Sunbiz detail links stay valid, and how GMC and CSLB pages render through Fetch. Each falls back to the Agent if wrong; check `extraction` and `calls` in the smoke output.
+7. Post on LinkedIn tagging TinyFish, and share in #showcase on the TinyFish Discord.
 
 ## LinkedIn post draft
 
