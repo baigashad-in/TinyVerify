@@ -18,20 +18,20 @@ import { join } from "node:path";
 import { loadDotEnv } from "../src/config.js";
 import { MonitorService } from "../src/monitor/service.js";
 import { MemoryStore } from "../src/monitor/store.js";
-import { SdkGateway } from "../src/tinyfish/gateway.js";
+import { BILLING_MESSAGE, SdkGateway } from "../src/tinyfish/gateway.js";
 import type { VerifyRequestInput } from "../src/types.js";
 import { verify } from "../src/verify/pipeline.js";
 
-const cases: { label: string; request: VerifyRequestInput }[] = [
-  { label: "uk-company-by-number", request: { name: "Tesco PLC", record_type: "company", jurisdiction: "UK", licence_number: "00445790" } },
-  { label: "uk-company-by-name", request: { name: "Rolls-Royce Holdings plc", record_type: "company", jurisdiction: "England" } },
-  { label: "uk-company-no-match", request: { name: "Zqxv Imaginary Widget Works Ltd", record_type: "company", jurisdiction: "UK" } },
-  { label: "au-abn-by-number", request: { name: "Woolworths Group Limited", record_type: "abn", jurisdiction: "Australia", licence_number: "88 000 014 675" } },
-  { label: "au-abn-by-name", request: { name: "Woolworths Group Limited", record_type: "business registration", jurisdiction: "NSW" } },
-  { label: "ca-federal-corp-by-name", request: { name: "Canadian National Railway Company", record_type: "corporation", jurisdiction: "Canada" } },
-  { label: "ca-ambiguous-code", request: { name: "Canadian National Railway Company", record_type: "corporation", jurisdiction: "CA" } },
-  { label: "fl-sunbiz-by-name", request: { name: "Publix Super Markets, Inc.", record_type: "corporation", jurisdiction: "Florida" } },
-  { label: "discovery-us-state-business", request: { name: "Pfizer Inc.", record_type: "business entity", jurisdiction: "New York" } },
+const cases: { label: string; request: VerifyRequestInput; expect?: string }[] = [
+  { label: "uk-company-by-number", request: { name: "Tesco PLC", record_type: "company", jurisdiction: "UK", licence_number: "00445790" }, expect: "verified" },
+  { label: "uk-company-by-name", request: { name: "Rolls-Royce Holdings plc", record_type: "company", jurisdiction: "England" }, expect: "verified" },
+  { label: "uk-company-no-match", request: { name: "Zqxv Imaginary Widget Works Ltd", record_type: "company", jurisdiction: "UK" }, expect: "no_match" },
+  { label: "au-abn-by-number", request: { name: "Woolworths Group Limited", record_type: "abn", jurisdiction: "Australia", licence_number: "88 000 014 675" }, expect: "verified" },
+  { label: "au-abn-by-name", request: { name: "Woolworths Group Limited", record_type: "business registration", jurisdiction: "NSW" }, expect: "verified" },
+  { label: "ca-federal-corp-by-name", request: { name: "Canadian National Railway Company", record_type: "corporation", jurisdiction: "Canada" }, expect: "verified" },
+  { label: "ca-ambiguous-code", request: { name: "Canadian National Railway Company", record_type: "corporation", jurisdiction: "CA" }, expect: "verified (Canada) or multiple_matches (if California also lists it)" },
+  { label: "fl-sunbiz-by-name", request: { name: "Publix Super Markets, Inc.", record_type: "corporation", jurisdiction: "Florida" }, expect: "verified" },
+  { label: "discovery-us-state-business", request: { name: "Pfizer Inc.", record_type: "business entity", jurisdiction: "New York" }, expect: "verified or multiple_matches" },
 ];
 
 if (process.env.SMOKE_GMC_NUMBER) {
@@ -72,11 +72,16 @@ for (const c of cases) {
     number: rec?.licence_number ?? null,
     via: rec?.source.retrieved_via ?? null,
     source: rec?.source.url ?? null,
-    calls: result.tinyfish_calls.map((x) => x.endpoint).join(","),
+    calls: result.tinyfish_calls.map((x) => (x.action === "get_contents_full_page" ? "fetch-full" : x.endpoint)).join(","),
+    expected: c.expect ?? null,
     seconds: Math.round((Date.now() - started) / 1000),
   };
   summary.push(line);
   console.log(JSON.stringify(line));
+  if (result.message.includes(BILLING_MESSAGE)) {
+    console.log("\nStopped: the TinyFish account has no credit, so every later case would fail the same way.");
+    break;
+  }
 }
 
 if (process.env.SMOKE_MONITOR === "1") {
