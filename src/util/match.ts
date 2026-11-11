@@ -221,6 +221,18 @@ export function nameVariants(name: string, kind: EntityKind | null, opts: { last
 export interface Scored<T> {
   item: T;
   score: number;
+  /** Share of the requested name's words found in the candidate (see requestCoverage). */
+  coverage?: number;
+}
+
+/**
+ * Share of the requested name's core words that appear in the candidate,
+ * with the same typo tolerance as nameScore. nameScore averages both
+ * directions, so "WIDGET WORKS LIMITED" scored 0.75 for "Zqxv Imaginary
+ * Widget Works Ltd" even though half the requested words are missing.
+ */
+export function requestCoverage(requested: string, candidate: string, kind: EntityKind | null): number {
+  return Math.round(directional(coreTokens(requested, kind), coreTokens(candidate, kind), kind) * 1000) / 1000;
 }
 
 export type MatchDecision<T> =
@@ -231,6 +243,8 @@ export type MatchDecision<T> =
 export const MATCH_THRESHOLDS = {
   /** At or above this a candidate is a strong match. */
   strong: 0.92,
+  /** A weak match must still contain at least this share of the requested words. */
+  minCoverage: 0.75,
   /** The best strong match must beat the runner-up by this much to be chosen. */
   gap: 0.06,
   /** Below this a candidate is not offered as a possible match. */
@@ -259,7 +273,9 @@ export function decide<T>(scored: Scored<T>[]): MatchDecision<T> {
     return { kind: "multiple", options: close, exact: false };
   }
 
-  const possible = sorted.filter((s) => s.score >= MATCH_THRESHOLDS.weak).slice(0, 10);
+  // A "possible" match must contain most of the requested words; a candidate
+  // that only shares a generic part ("Widget Works") is a near miss, not a match.
+  const possible = sorted.filter((s) => s.score >= MATCH_THRESHOLDS.weak && (s.coverage ?? 1) >= MATCH_THRESHOLDS.minCoverage).slice(0, 10);
   if (possible.length > 0) return { kind: "multiple", options: possible, exact: false };
   return { kind: "none", nearMisses: sorted.filter((s) => s.score >= 0.5).slice(0, 5) };
 }
