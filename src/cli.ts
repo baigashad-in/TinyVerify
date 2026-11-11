@@ -13,6 +13,7 @@ Usage:
   tinyverify verify --name <name> --type <record type> --jurisdiction <place> [--number <id>] [--registry <id>] [--kind person|business]
   tinyverify watch  (same flags as verify) [--cron "<cron>"] [--callback <url>]
   tinyverify recheck <watch id>
+  tinyverify unwatch <watch id>     stop watching and delete the TinyFish Monitor
   tinyverify watches
   tinyverify registries
 
@@ -91,6 +92,13 @@ async function main(): Promise<number> {
     console.log(JSON.stringify(await monitors.recheck(id), null, 2));
     return 0;
   }
+  if (cmd === "unwatch") {
+    const id = positionals[1];
+    if (!id) throw new Error("unwatch needs a watch id");
+    const w = await monitors.unwatch(id);
+    console.log(JSON.stringify({ watch_id: w.id, state: w.state, deleted_monitor_id: w.monitor_id, subject: w.subject_name }, null, 2));
+    return 0;
+  }
   if (cmd === "watches") {
     console.log(JSON.stringify(await store.listWatches(), null, 2));
     return 0;
@@ -99,10 +107,17 @@ async function main(): Promise<number> {
   return 2;
 }
 
+// Set the exit code and let Node end on its own instead of calling
+// process.exit(). On Windows, process.exit() while the TinyFish SDK's network
+// connections are still closing can crash Node at shutdown with
+// "Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)", after the output
+// has already printed. The smoke script ends this way and did not crash.
 main().then(
-  (code) => process.exit(code),
+  (code) => {
+    process.exitCode = code;
+  },
   (err) => {
     console.error(err instanceof Error ? err.message : String(err));
-    process.exit(1);
+    process.exitCode = 1;
   },
 );
