@@ -137,6 +137,7 @@ export function recordGoal(args: {
     `You are on ${args.registryName} (${args.authority}).`,
     target,
     "Set page_state to 'record' only when a single record's detail page is open.",
+    "name: the registered name of the person or organisation, copied from the record's name field (for example 'Entity name', 'Company name', 'Licensee', 'Name'). Never the page title, heading or site name.",
     "status_text: the registration or licence status wording exactly as shown.",
     "identifier: the licence, registration or company number exactly as shown.",
     "issue_date, expiry_date, renewal_due_date, status_effective_date: copy the dates exactly as shown, or null if the page has none.",

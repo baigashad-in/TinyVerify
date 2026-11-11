@@ -46,12 +46,32 @@ export interface FetchOutcome {
   error: string | null;
 }
 
+export interface FetchOptions {
+  /** Return every link on the page (absolute URLs) in page.links. */
+  links?: boolean;
+  purpose?: string;
+  /**
+   * Skip TinyFish's automatic main-content extraction and convert the whole
+   * <body> (include_selectors: ["body"]). Registry search results and record
+   * tables can be dropped as "boilerplate" by the default extraction.
+   */
+  fullPage?: boolean;
+}
+
+/** Message shown when the TinyFish wallet is empty. Kept short and free of payment prompts. */
+export const BILLING_MESSAGE =
+  "TinyFish rejected the call because the account has no credit (wallet balance $0). Agent runs need credit; add it at https://agent.tinyfish.ai/wallet and run again.";
+
+export function isBillingError(text: string): boolean {
+  return /insufficient[_ ](credits|funds)|wallet balance is too low|balance is too low|payment required/i.test(text);
+}
+
 /**
  * Everything TinyVerify needs from TinyFish. The SDK implementation is below;
  * tests swap in a fake so they never touch the network.
  */
 export interface Gateway {
-  fetchPage(url: string, opts?: { links?: boolean; purpose?: string }): Promise<FetchOutcome>;
+  fetchPage(url: string, opts?: FetchOptions): Promise<FetchOutcome>;
   search(params: { query: string; include_domains?: string[]; location?: string; purpose?: string }): Promise<SearchHit[]>;
   runAgent(params: AgentParams): Promise<AgentOutcome>;
   createMonitor(params: MonitorCreateParams): Promise<{ monitor_id: string; status: string; baseline: MonitorRunPayload | null }>;
@@ -61,7 +81,7 @@ export interface Gateway {
 
 export class TinyVerifyError extends Error {
   constructor(
-    readonly code: "monitor_not_enabled" | "tinyfish_auth" | "tinyfish_error" | "config",
+    readonly code: "monitor_not_enabled" | "tinyfish_auth" | "tinyfish_billing" | "tinyfish_error" | "config",
     message: string,
   ) {
     super(message);
@@ -80,6 +100,7 @@ function pageFromResult(r: {
 }
 
 function mapError(err: unknown, what: string): never {
+  if (err instanceof TinyVerifyError) throw err;
   if (err instanceof PermissionDeniedError && what.startsWith("monitor")) {
     throw new TinyVerifyError(
       "monitor_not_enabled",
@@ -90,6 +111,10 @@ function mapError(err: unknown, what: string): never {
     throw new TinyVerifyError("tinyfish_auth", "TinyFish rejected the API key (401). Check TINYFISH_API_KEY.");
   }
   const msg = err instanceof Error ? err.message : String(err);
+  // Stop the whole request: every later call would fail the same way.
+  if ((err instanceof APIStatusError && err.statusCode === 402) || isBillingError(msg)) {
+    throw new TinyVerifyError("tinyfish_billing", BILLING_MESSAGE);
+  }
   throw new TinyVerifyError("tinyfish_error", `TinyFish ${what} failed: ${msg}`);
 }
 
@@ -115,20 +140,57 @@ export class SdkGateway implements Gateway {
     this.once = new TinyFish({ apiKey, timeout: (AGENT_MAX_SECONDS + 60) * 1000, maxRetries: 0 });
   }
 
-  async fetchPage(url: string, opts: { links?: boolean; purpose?: string } = {}): Promise<FetchOutcome> {
+  async fetchPage(url: string, opts: FetchOptions = {}): Promise<FetchOutcome> {
+    const purpose = opts.purpose ?? "Verify a licence or registration record on an official registry for a compliance check";
+    if (opts.fullPage) return this.fetchFullPage(url, purpose);
     try {
       const res = await this.client.fetch.getContents({
         urls: [url],
         format: "markdown",
         ttl: 0, // always a live read of the registry, never a cached copy
         links: opts.links ?? false,
-        purpose: opts.purpose ?? "Verify a licence or registration record on an official registry for a compliance check",
+        purpose,
       });
       const first = res.results[0];
       if (first) return { page: pageFromResult(first), error: null };
       const e = res.errors[0];
+      if (e && isBillingError(e.error)) throw new TinyVerifyError("tinyfish_billing", BILLING_MESSAGE);
       return { page: null, error: e ? e.error : "Fetch returned no result" };
     } catch (err) {
+      mapError(err, "fetch");
+    }
+  }
+
+  /**
+   * Fetch with include_selectors. SDK 0.11 validates Fetch parameters strictly
+   * and does not list include_selectors yet, although the Fetch API accepts
+   * it, so this posts through the SDK client's own post() (same auth, retries
+   * and error mapping) with the extra field.
+   */
+  private async fetchFullPage(url: string, purpose: string): Promise<FetchOutcome> {
+    try {
+      const res = await this.client.post<{ results?: unknown[]; errors?: unknown[] }>(this.client.productUrl("fetch"), {
+        json: { urls: [url], format: "markdown", ttl: 0, links: true, include_selectors: ["body"], purpose },
+      });
+      const first = (res.results ?? [])[0] as Record<string, unknown> | undefined;
+      if (first) {
+        return {
+          page: pageFromResult({
+            url: String(first.url ?? url),
+            final_url: typeof first.final_url === "string" ? first.final_url : null,
+            title: typeof first.title === "string" ? first.title : null,
+            text: first.text,
+            links: Array.isArray(first.links) ? first.links.filter((l): l is string => typeof l === "string") : undefined,
+          }),
+          error: null,
+        };
+      }
+      const e = (res.errors ?? [])[0] as Record<string, unknown> | undefined;
+      const msg = e ? String(e.error ?? e.message ?? e.code ?? "unknown error") : "Fetch returned no result";
+      if (isBillingError(msg)) throw new TinyVerifyError("tinyfish_billing", BILLING_MESSAGE);
+      return { page: null, error: msg };
+    } catch (err) {
+      if (err instanceof TinyVerifyError) throw err;
       mapError(err, "fetch");
     }
   }
@@ -163,11 +225,13 @@ export class SdkGateway implements Gateway {
         proxy_config: { enabled: true, ...(params.proxy_country ? { country_code: params.proxy_country } : {}) },
         agent_config: { max_duration_seconds: params.max_duration_seconds ?? AGENT_MAX_SECONDS },
       });
+      const error = res.error ? `${res.error.code ?? res.error.category}: ${res.error.message}` : null;
+      if (error && isBillingError(error)) throw new TinyVerifyError("tinyfish_billing", BILLING_MESSAGE);
       return {
         status: res.status,
         run_id: res.run_id ?? null,
         result: (res.result as Record<string, unknown> | null) ?? null,
-        error: res.error ? `${res.error.code ?? res.error.category}: ${res.error.message}` : null,
+        error,
       };
     } catch (err) {
       mapError(err, "agent");
@@ -267,8 +331,8 @@ export class TracedGateway implements Gateway {
     }
   }
 
-  fetchPage(url: string, opts?: { links?: boolean; purpose?: string }) {
-    return this.trace("fetch", "get_contents", url, () => this.inner.fetchPage(url, opts));
+  fetchPage(url: string, opts?: FetchOptions) {
+    return this.trace("fetch", opts?.fullPage ? "get_contents_full_page" : "get_contents", url, () => this.inner.fetchPage(url, opts));
   }
   search(params: { query: string; include_domains?: string[]; location?: string; purpose?: string }) {
     return this.trace("search", "query", params.query, () => this.inner.search(params));
