@@ -22,7 +22,14 @@ export function parseCompaniesHouseSearch(page: FetchedPage): SearchParse {
   }
   const itemRe = /\[([^\]]+)\]\((?:https?:\/\/find-and-update\.company-information\.service\.gov\.uk(?::443)?)?\/company\/([A-Z0-9]{8})(?:\s+"[^"]*")?\)/g;
   const matches = [...text.matchAll(itemRe)];
-  if (matches.length === 0) return { kind: "unparsed", reason: "no company links found on the search page" };
+  if (matches.length === 0) {
+    const plain = parsePlainSearchResults(text, page.links);
+    if (plain.length > 0) {
+      const totalMatch = /([\d,]+)\s+match(?:es)?\s+found/i.exec(text);
+      return { kind: "results", candidates: plain, total: totalMatch ? Number((totalMatch[1] ?? "").replace(/,/g, "")) : null };
+    }
+    return { kind: "unparsed", reason: "no company links or result lines found on the search page" };
+  }
 
   const candidates: SearchCandidate[] = [];
   const seen = new Set<string>();
@@ -52,6 +59,57 @@ export function parseCompaniesHouseSearch(page: FetchedPage): SearchParse {
   }
   const totalMatch = /([\d,]+)\s+match(?:es)?\s+found/i.exec(text);
   return { kind: "results", candidates, total: totalMatch ? Number((totalMatch[1] ?? "").replace(/,/g, "")) : null };
+}
+
+/** A result line such as "00445790 - Incorporated on 27 November 1947" or "SC123456 - Dissolved on 1 May 2020". */
+const RESULT_META = /^([A-Z]{2}\d{6}|\d{8})\s+-\s+(Incorporated|Dissolved|Registered|Removed|Converted|Closed)\b/i;
+
+/**
+ * Fallback for search pages whose Markdown has no links (Fetch's main-content
+ * extraction can render result headings as plain text). Each result has its
+ * name, then optionally "Matching previous names:" and a previous name, then
+ * a line that starts with the company number. If Fetch returned the page's
+ * links, a number must also appear as a /company/ link to be accepted.
+ */
+function parsePlainSearchResults(text: string, links: string[] | undefined): SearchCandidate[] {
+  const lines = cleanLines(text);
+  const linked = links?.length
+    ? new Set(links.map((l) => /\/company\/([A-Z0-9]{8})(?:[/?#]|$)/i.exec(l)?.[1]?.toUpperCase()).filter((x): x is string => !!x))
+    : null;
+  const out: SearchCandidate[] = [];
+  const seen = new Set<string>();
+  for (let i = 0; i < lines.length; i++) {
+    const m = RESULT_META.exec(lines[i] ?? "");
+    if (!m) continue;
+    const number = (m[1] ?? "").toUpperCase();
+    if (seen.has(number) || (linked && linked.size > 0 && !linked.has(number))) continue;
+    // Walk back over an optional "Matching previous names:" block to the result name.
+    let j = i - 1;
+    let previous: string | null = null;
+    for (let k = i - 1; k >= Math.max(0, i - 4); k--) {
+      if (/^matching previous names:?$/i.test(lines[k] ?? "")) {
+        previous = lines[k + 1] ?? null;
+        j = k - 1;
+        break;
+      }
+    }
+    const name = (lines[j] ?? "").trim();
+    if (!name || RESULT_META.test(name) || name.length > 160) continue;
+    seen.add(number);
+    const statusLine = lines[i] ?? "";
+    const dissolved = /dissolved on|removed on/i.test(statusLine);
+    const next = lines[i + 1] ?? null;
+    out.push({
+      name,
+      identifier: number,
+      status_raw: dissolved ? "Dissolved" : "Not dissolved (status shown on record page)",
+      record_url: `${BASE}/company/${number}`,
+      location: next && !RESULT_META.test(next) && !/^matching previous names/i.test(next) ? next : null,
+      matched_previous_name: previous !== null,
+      snippet: [previous ? `Previous name: ${previous}` : null, statusLine].filter(Boolean).join(" ; ") || null,
+    });
+  }
+  return out;
 }
 
 export function parseCompaniesHouseRecord(page: FetchedPage): ParseOutcome {

@@ -144,6 +144,8 @@ export const abr: RegistryAdapter = {
     "Name search may list only active ABNs; search by ABN to check a cancelled one.",
   ],
   agent: { stealth: false, proxyCountry: "AU" },
+  // A live run returned the page heading "ABN Lookup Record" as the name.
+  agentRecordInstructions: "name is the value of the 'Entity name' field. other_fields must include 'Entity name' and 'ABN status'.",
   normalizeIdentifier(raw) {
     const s = raw.replace(/\D/g, "");
     return isValidAbn(s) ? s : null;
