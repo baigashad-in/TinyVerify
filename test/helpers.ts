@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type {
   AgentOutcome,
+  FetchOptions,
   AgentParams,
   FetchOutcome,
   Gateway,
@@ -39,9 +40,12 @@ export class FakeGateway implements Gateway {
     this.pages.set(url, page(url, fixtureName, title));
   }
 
-  async fetchPage(url: string): Promise<FetchOutcome> {
-    this.log.push(`fetch ${url}`);
-    const p = this.pages.get(url);
+  /** Pages returned for whole-page Fetch (include_selectors: ["body"]). Missing means a 404. */
+  fullPages = new Map<string, FetchedPage | { error: string }>();
+
+  async fetchPage(url: string, opts: FetchOptions = {}): Promise<FetchOutcome> {
+    this.log.push(`${opts.fullPage ? "fetch-full" : "fetch"} ${url}`);
+    const p = (opts.fullPage ? this.fullPages : this.pages).get(url);
     if (!p) return { page: null, error: `404 for ${url}` };
     if ("error" in p) return { page: null, error: p.error };
     return { page: p, error: null };
