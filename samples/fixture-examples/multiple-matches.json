@@ -1,0 +1,63 @@
+{
+  "schema_version": "tinyverify.v1",
+  "request": {
+    "name": "Example Ltd",
+    "record_type": "company",
+    "jurisdiction": "UK",
+    "allow_discovery": true
+  },
+  "records": [],
+  "candidates": [
+    {
+      "registry_id": "uk-companies-house",
+      "name": "EXAMPLE LTD",
+      "identifier": "99111111",
+      "status_raw": "Not dissolved (status shown on record page)",
+      "record_url": "https://find-and-update.company-information.service.gov.uk/company/99111111",
+      "location": null,
+      "score": 1,
+      "matched_previous_name": false,
+      "snippet": "99111111 - Incorporated on 1 May 2020"
+    },
+    {
+      "registry_id": "uk-companies-house",
+      "name": "EXAMPLE LIMITED",
+      "identifier": "99222222",
+      "status_raw": "Dissolved",
+      "record_url": "https://find-and-update.company-information.service.gov.uk/company/99222222",
+      "location": null,
+      "score": 1,
+      "matched_previous_name": false,
+      "snippet": "99222222 - Dissolved on 9 June 2019"
+    }
+  ],
+  "sources_checked": [
+    {
+      "registry_id": "uk-companies-house",
+      "registry_name": "Companies House register (Find and update company information)",
+      "checked_at": "2026-11-04T10:00:04.000Z",
+      "step": "search",
+      "method": "tinyfish_fetch",
+      "url": "https://find-and-update.company-information.service.gov.uk/search/companies?q=Example%20Ltd",
+      "query": "Example Ltd",
+      "outcome": "ok",
+      "result_count": 2,
+      "detail": "registry reports 2 matches"
+    }
+  ],
+  "warnings": [],
+  "tinyfish_calls": [
+    {
+      "endpoint": "fetch",
+      "action": "get_contents",
+      "target": "https://find-and-update.company-information.service.gov.uk/search/companies?q=Example%20Ltd",
+      "ok": true,
+      "ms": 0,
+      "at": "2026-11-04T04:34:59.323Z",
+      "run_id": null
+    }
+  ],
+  "checked_at": "2026-11-04T10:00:05.000Z",
+  "outcome": "multiple_matches",
+  "message": "2 records on Companies House register (Find and update company information) match \"Example Ltd\" exactly. No record was chosen. Re-run with licence_number set to one of the identifiers in candidates."
+}

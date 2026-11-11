@@ -1,0 +1,102 @@
+{
+  "schema_version": "tinyverify.v1",
+  "request": {
+    "name": "Northwind Example Trading Ltd",
+    "record_type": "company",
+    "jurisdiction": "UK",
+    "licence_number": "99579246",
+    "allow_discovery": true
+  },
+  "records": [
+    {
+      "registry": {
+        "id": "uk-companies-house",
+        "name": "Companies House register (Find and update company information)",
+        "authority": "Companies House, UK Government",
+        "country": "GB",
+        "region": null,
+        "curated": true
+      },
+      "record_type": "business_registration",
+      "subject": {
+        "name": "NORTHWIND EXAMPLE TRADING LIMITED",
+        "entity_kind": "business"
+      },
+      "status": {
+        "normalized": "active",
+        "raw": "Active",
+        "effective_date": null
+      },
+      "licence_number": "99579246",
+      "identifiers": {
+        "company_number": "99579246"
+      },
+      "issue_date": "2021-09-09",
+      "expiry_date": null,
+      "renewal_due_date": null,
+      "expiry_note": "UK company registrations do not expire.",
+      "disciplinary_actions": [],
+      "disciplinary_note": "Companies House does not publish disciplinary actions. Strike-off, insolvency and overdue filings are reported in compliance_flags.",
+      "compliance_flags": [],
+      "details": {
+        "company_type": "Private limited Company",
+        "registered_office_address": "1 Example Street, Manchester, England, M1 1AA",
+        "dissolved_on": null
+      },
+      "match": {
+        "method": "identifier",
+        "score": 1,
+        "query": "99579246",
+        "name_matches_request": true
+      },
+      "source": {
+        "url": "https://find-and-update.company-information.service.gov.uk/company/99579246",
+        "record_specific_url": true,
+        "final_url": "https://find-and-update.company-information.service.gov.uk/company/99579246",
+        "title": "NORTHWIND EXAMPLE TRADING LIMITED overview - Find and update company information - GOV.UK",
+        "official_domain": "find-and-update.company-information.service.gov.uk",
+        "retrieved_via": "tinyfish_fetch",
+        "extraction": "deterministic_parser",
+        "evidence": [
+          "Company status Active",
+          "Incorporated on 9 September 2021",
+          "Company number 99579246"
+        ],
+        "content_sha256": "b818f18ebf7a1648e2c28145d7ec6f4b5ee31f74e0eac7f26a5a4c2656a7cdc4",
+        "registry_timestamp": null,
+        "agent_run_id": null
+      },
+      "checked_at": "2026-11-04T10:00:02.000Z"
+    }
+  ],
+  "candidates": [],
+  "sources_checked": [
+    {
+      "registry_id": "uk-companies-house",
+      "registry_name": "Companies House register (Find and update company information)",
+      "checked_at": "2026-11-04T10:00:01.000Z",
+      "step": "record",
+      "method": "tinyfish_fetch",
+      "url": "https://find-and-update.company-information.service.gov.uk/company/99579246",
+      "query": "99579246",
+      "outcome": "ok",
+      "result_count": 1,
+      "detail": null
+    }
+  ],
+  "warnings": [],
+  "tinyfish_calls": [
+    {
+      "endpoint": "fetch",
+      "action": "get_contents",
+      "target": "https://find-and-update.company-information.service.gov.uk/company/99579246",
+      "ok": true,
+      "ms": 0,
+      "at": "2026-11-04T04:34:59.313Z",
+      "run_id": null
+    }
+  ],
+  "checked_at": "2026-11-04T10:00:03.000Z",
+  "outcome": "verified",
+  "message": "NORTHWIND EXAMPLE TRADING LIMITED is \"Active\" (active) on Companies House register (Find and update company information); Company number 99579246."
+}
