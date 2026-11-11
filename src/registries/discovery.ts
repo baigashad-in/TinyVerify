@@ -77,16 +77,39 @@ export interface DiscoveredRegistry {
 }
 
 /** First official result; null when search found only unofficial sites. */
-export function pickOfficial(hits: SearchHit[]): { chosen: DiscoveredRegistry | null; rejected: string[] } {
+/** Signs that an official page is a register search rather than a form, letter or tax service. */
+const GOOD_SIGNS: Record<"business" | "licence", RegExp> = {
+  business: /\b(sos|secretary of state|bizfile|business (entity |name )?search|entity search|corporations?( division)?|company search|business search|registry)\b/i,
+  licence: /\b(licen[cs]e (lookup|search|verification)|verify a licen[cs]e|verification|lookup|registry|register)\b/i,
+};
+const BAD_SIGNS = /\b(tax|franchise tax|e-?letter|status letter|forms?|pdf|faq|news|press release|jobs?|careers?)\b/i;
+
+/**
+ * Choose the best official result, not just the first one. Results are
+ * official-domain first (unofficial sites are never chosen), then ranked by
+ * whether the title, URL and snippet look like a register search for this
+ * kind of record. Search order breaks ties. A live run picked California's
+ * Franchise Tax Board "Entity Status Letter" page for a corporation search;
+ * that page now ranks below a Secretary of State business search.
+ */
+export function pickOfficial(
+  hits: SearchHit[],
+  kind: "business" | "licence" = "licence",
+): { chosen: DiscoveredRegistry | null; rejected: string[] } {
   const rejected: string[] = [];
+  const official: { h: SearchHit; host: string; score: number }[] = [];
   for (const h of [...hits].sort((a, b) => a.position - b.position)) {
     const host = hostOf(h.url);
     if (isOfficialHost(host)) {
-      return { chosen: { host: (host ?? "").replace(/^www\./, ""), url: h.url, title: h.title, snippet: h.snippet }, rejected };
+      const text = `${host} ${h.url} ${h.title} ${h.snippet ?? ""}`;
+      official.push({ h, host: (host ?? "").replace(/^www\./, ""), score: (GOOD_SIGNS[kind].test(text) ? 2 : 0) - (BAD_SIGNS.test(text) ? 1 : 0) });
+    } else if (host) {
+      rejected.push(host);
     }
-    if (host) rejected.push(host);
   }
-  return { chosen: null, rejected };
+  const best = official.reduce<(typeof official)[number] | null>((a, b) => (!a || b.score > a.score ? b : a), null);
+  if (!best) return { chosen: null, rejected };
+  return { chosen: { host: best.host, url: best.h.url, title: best.h.title, snippet: best.h.snippet }, rejected };
 }
 
 /** Keyword mapping used for registries without a curated parser. */
