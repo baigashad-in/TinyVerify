@@ -24,6 +24,10 @@ describe("dates", () => {
 });
 
 describe("cleanLines and findLabel", () => {
+  it("strips a heading inside a list item", () => {
+    assert.deepEqual(cleanLines("- ### TESCO PLC\n* ## Other"), ["TESCO PLC", "Other"]);
+  });
+
   it("handles label/value on separate lines, colons, tables and bold", () => {
     const md = [
       "- Company status",

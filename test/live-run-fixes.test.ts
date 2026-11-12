@@ -20,20 +20,33 @@ const chSearch = (q: string) => `${CH}/search/companies?q=${encodeURIComponent(q
 const ABR_REC = "https://abr.business.gov.au/ABN/View?abn=88000014675";
 const p = (text: string, url = "https://x", links?: string[]) => ({ url, final_url: url, title: null, text, links });
 
-/** A search page as main-content Markdown without links: names are plain text. */
+/**
+ * A search page as whole-page Markdown, in the shape the live dump showed:
+ * each result is a list item with a heading, then the number line. No links.
+ */
 const PLAIN_SEARCH = [
+  "## Company results",
   "78 matches found",
-  "EXAMPLEWORKS LIMITED",
+  "- ### EXAMPLEWORKS LIMITED",
   "Matching previous names:",
   "EXAMPLEWORKS SUPPORT SERVICES LTD.",
   "99153983 - Incorporated on 1 February 1996",
   "1 Example Road, Exampletown, EX1 1AA",
-  "EXAMPLEWORKS CREATIONS LTD",
+  "- ### EXAMPLEWORKS CREATIONS LTD",
   "99522306 - Incorporated on 1 April 2015",
   "2 Example Road, Exampletown, EX1 1AB",
-  "EXAMPLEWORKS FIVE LTD",
+  "- ### EXAMPLEWORKS FIVE LTD",
   "NI995706 - Dissolved on 18 November 2025",
   "Unit 4, 5 Example Road, Exampletown, BT0 0AA",
+].join("\n\n");
+
+/** The default main-content Markdown: the result names are gone, only numbers and addresses remain. */
+const NAMELESS_SEARCH = [
+  "## Company results",
+  "99153983 - Incorporated on 1 February 1996",
+  "1 Example Road, Exampletown, EX1 1AA",
+  "99522306 - Incorporated on 1 April 2015",
+  "2 Example Road, Exampletown, EX1 1AB",
 ].join("\n\n");
 
 describe("Companies House search without links", () => {
@@ -52,6 +65,11 @@ describe("Companies House search without links", () => {
     assert.equal(s.candidates[0]?.matched_previous_name, true);
     assert.equal(s.candidates[2]?.status_raw, "Dissolved");
     assert.equal(s.total, 78);
+  });
+
+  it("does not take section titles or addresses as names when the names are missing", () => {
+    const s = parseCompaniesHouseSearch(p(NAMELESS_SEARCH));
+    assert.equal(s.kind, "unparsed", "unparsed, so the whole page is fetched next");
   });
 
   it("when Fetch returned the page links, keeps only numbers that are linked", () => {
@@ -115,6 +133,20 @@ describe("whole-page Fetch before Agent", () => {
     assert.equal(res.body.read_via, "tinyfish_monitor+fetch");
     assert.deepEqual(res.body.events, []);
     assert.equal(gw.log.filter((l) => l.startsWith("agent")).length, 0);
+  });
+});
+
+describe("misread search pages", () => {
+  it("results that share no word with the query are not trusted; the whole page is fetched next", async () => {
+    const gw = new FakeGateway();
+    const q = "Exampleworks Ltd";
+    // A misread page whose "names" are unrelated text.
+    gw.pages.set(chSearch(q), p(`[GENERAL NOTICE](${CH}/company/99000201)\n\n99000201 - Incorporated on 1 May 2020`));
+    gw.fullPages.set(chSearch(q), p(fixture("ch-search-example.md")));
+    gw.pages.set(`${CH}/company/99153983`, p(fixture("ch-tesco.md").replaceAll("TESCO PLC", "EXAMPLEWORKS LIMITED").replaceAll("00445790", "99153983")));
+    const r = await verify({ name: q, record_type: "company", jurisdiction: "UK" }, { gateway: gw });
+    assert.equal(r.outcome, "verified", r.message);
+    assert.ok(r.sources_checked.some((c) => /none shares a word/.test(c.detail ?? "")));
   });
 });
 
