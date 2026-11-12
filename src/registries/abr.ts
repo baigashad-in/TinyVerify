@@ -151,12 +151,14 @@ export const abr: RegistryAdapter = {
     return isValidAbn(s) ? s : null;
   },
   recordUrl: (id) => `${BASE}/ABN/View?abn=${id}`,
+  // Name search goes straight to the Agent. In the live dump (12 Nov 2026)
+  // /Search/ResultsActive?SearchText=... returned no result rows through Fetch,
+  // neither as default Markdown (211 characters) nor as the whole page, so a
+  // Fetch attempt only added delay. The Agent search from /Search/Index worked
+  // live (20 results). parseAbrSearch is kept for pages that do list rows.
   search: {
-    mode: "fetch",
-    url: (q) => `${BASE}/Search/ResultsActive?SearchText=${encodeURIComponent(q)}`,
-    parse: parseAbrSearch,
-    noResultsIsConclusive: false,
-    agentFallbackUrl: `${BASE}/Search/Index`,
+    mode: "agent",
+    url: `${BASE}/Search/Index`,
     agentInstructions: () =>
       "Search by name. If there is an option to include cancelled or historical ABNs, include them. Return the 11-digit ABN as the identifier.",
   },
