@@ -1,5 +1,5 @@
 import { CANDIDATES_SCHEMA, RECORD_SCHEMA, recordGoal, searchGoal } from "../tinyfish/agentSchemas.js";
-import { TinyVerifyError, TracedGateway, type Gateway } from "../tinyfish/gateway.js";
+import { TinyVerifyError, TracedGateway, type FetchOptions, type FetchOutcome, type Gateway } from "../tinyfish/gateway.js";
 import { discoveryQuery, genericNormalizeStatus, pickOfficial, usesMonthFirstDates } from "../registries/discovery.js";
 import { getAdapter, jurisdictionLabel, route, type Route } from "../registries/index.js";
 import {
@@ -76,6 +76,21 @@ function inferKind(req: VerifyRequest, adapter: RegistryAdapter | null): EntityK
 function check(ctx: Ctx, adapter: RegistryAdapter, c: Omit<SourceCheck, "registry_id" | "registry_name" | "checked_at">): void {
   ctx.checks.push({ registry_id: adapter.id, registry_name: adapter.name, checked_at: ctx.now().toISOString(), ...c });
 }
+
+/** Per-URL Fetch errors worth one more try (a live run lost a free whole-page read to "proxy_error" and paid for an Agent run instead). */
+const TRANSIENT_FETCH = /proxy_error|timed? ?out|timeout|temporar|ECONNRESET|socket hang up|\b5\d\d\b|rate limit|too many requests/i;
+
+/** Fetch a page, trying once more after a transient per-URL error. Fetch is free up to 1,000 URLs a day. */
+async function fetchOnce(ctx: { gw: Gateway }, url: string, opts: FetchOptions): Promise<FetchOutcome> {
+  const f = await ctx.gw.fetchPage(url, opts);
+  if (f.page || !f.error || !TRANSIENT_FETCH.test(f.error)) return f;
+  const again = await ctx.gw.fetchPage(url, opts);
+  return again.page ? again : { page: null, error: `${again.error ?? f.error} (after one retry)` };
+}
+
+/** Wording that shows an Agent "no results" answer is really a search that did not run. */
+const SEARCH_FAILED =
+  /could not be completed|did not (load|transition|complete|run|return any results? (?:after|because))|loading spinner|spinner|without javascript|enable (it|javascript)|technical issue|may indicate|unable to (search|load|complete)|timed? ?out|no results were loaded|not displayed|page did not|failed to (load|search)/i;
 
 /** True when the two names share at least one core word (typos allowed). */
 function sharesWord(a: string, b: string, kind: Ctx["kind"]): boolean {
@@ -210,13 +225,14 @@ export async function readRecord(
   // The default Fetch extraction keeps the "main content" and can drop record
   // tables, so a page that fetched fine but did not parse is fetched once more
   // as the whole page before the Agent is used.
-  const modes: ("default" | "full")[] = opts.skipFetch ? [] : opts.skipDefaultFetch ? ["full"] : ["default", "full"];
+  const baseModes = adapter.recordFetchModes ?? ["default", "full"];
+  const modes: ("default" | "full")[] = opts.skipFetch ? [] : opts.skipDefaultFetch ? baseModes.filter((m) => m !== "default") : baseModes;
   if (url && adapter.curated !== false) {
     for (const mode of modes) {
       const detailPrefix = mode === "full" ? "whole page: " : "";
       let retry = false;
       try {
-        const f = await ctx.gw.fetchPage(url, mode === "full" ? { fullPage: true } : {});
+        const f = await fetchOnce(ctx, url, mode === "full" ? { fullPage: true } : {});
         if (f.page?.text) {
           const p = adapter.parseRecord(f.page);
           if (p.ok) {
@@ -355,7 +371,15 @@ async function agentSearch(adapter: RegistryAdapter, ctx: Ctx, query: string, ur
     return { kind: "unavailable", reason };
   }
   if (state === "no_results") {
-    check(ctx, adapter, { step: "search", method: "tinyfish_agent", url, query, outcome: "no_results", result_count: 0, detail: str(a.result.no_results_message) });
+    const msg = str(a.result.no_results_message);
+    // A live run (New York, 12 Nov 2026) returned no_results with the note "the
+    // search could not be completed ... loading spinner". That is a failed
+    // search, not an answer from the registry, so it must not become no_match.
+    if (msg && SEARCH_FAILED.test(msg)) {
+      check(ctx, adapter, { step: "search", method: "tinyfish_agent", url, query, outcome: "error", result_count: null, detail: `agent said no results, but: ${msg}` });
+      return { kind: "unavailable", reason: `the search did not complete (${msg.slice(0, 160)})` };
+    }
+    check(ctx, adapter, { step: "search", method: "tinyfish_agent", url, query, outcome: "no_results", result_count: 0, detail: msg });
     return { kind: "no_results" };
   }
   const raw = objects(a.result.candidates);
@@ -387,11 +411,11 @@ async function searchCandidates(adapter: RegistryAdapter, ctx: Ctx, query: strin
     const spec = adapter.search;
     const url = spec.url(query, ctx.kind);
     // Same order as records: default Fetch, whole-page Fetch if the results did not parse, then Agent.
-    for (const mode of ["default", "full"] as const) {
+    for (const mode of spec.fetchModes ?? (["default", "full"] as const)) {
       const prefix = mode === "full" ? "whole page: " : "";
       let retry = false;
       try {
-        const f = await ctx.gw.fetchPage(url, mode === "full" ? { fullPage: true } : { links: true });
+        const f = await fetchOnce(ctx, url, mode === "full" ? { fullPage: true } : { links: true });
         if (f.page?.text) {
           const sp = spec.parse(f.page);
           // Registry search engines return names close to the query. If no
@@ -496,7 +520,8 @@ function buildRecord(
       official_domain: hostOf(r.url) ?? adapter.officialDomains[0] ?? "",
       retrieved_via: r.via,
       extraction: r.via === "tinyfish_fetch" ? "deterministic_parser" : "agent_structured_output",
-      evidence: [...new Set(p.evidence)].slice(0, 12).map((e) => truncate(e, 300)),
+      // One line per evidence item: page text can carry line breaks ("Company number\n00445790").
+      evidence: [...new Set(p.evidence.map((e) => e.replace(/\s+/g, " ").trim()))].filter(Boolean).slice(0, 12).map((e) => truncate(e, 300)),
       content_sha256: r.page?.text ? sha256(r.page.text) : null,
       registry_timestamp: p.registry_timestamp,
       agent_run_id: r.runId,
@@ -717,7 +742,7 @@ async function verifyWithDiscovery(ctx: Ctx, rt: Route, place: string = ctx.req.
     check(ctx, pseudo, { step: "discover", method: "tinyfish_search", url: null, query, outcome: "error", result_count: null, detail: err instanceof Error ? err.message : String(err) });
     return { adapter: null, outcome: "source_unavailable", records: [], candidates: [], message: "Registry discovery search failed." };
   }
-  const { chosen, rejected } = pickOfficial(hits, rt.recordType === "business_registration" ? "business" : "licence");
+  const { chosen, rejected, skippedOfficial = [] } = pickOfficial(hits, rt.recordType === "business_registration" ? "business" : "licence");
   check(ctx, pseudo, {
     step: "discover",
     method: "tinyfish_search",
@@ -725,7 +750,11 @@ async function verifyWithDiscovery(ctx: Ctx, rt: Route, place: string = ctx.req.
     query,
     outcome: chosen ? "ok" : "no_results",
     result_count: hits.length,
-    detail: chosen ? `chose official host ${chosen.host}` : `no official host among: ${[...new Set(rejected)].slice(0, 6).join(", ") || "no results"}`,
+    detail: chosen
+      ? `chose official host ${chosen.host}`
+      : skippedOfficial.length
+        ? `official pages found but none looked like a register search: ${[...new Set(skippedOfficial)].slice(0, 6).join(", ")}`
+        : `no official host among: ${[...new Set(rejected)].slice(0, 6).join(", ") || "no results"}`,
   });
   if (!chosen) {
     return {
@@ -733,7 +762,9 @@ async function verifyWithDiscovery(ctx: Ctx, rt: Route, place: string = ctx.req.
       outcome: "unsupported",
       records: [],
       candidates: [],
-      message: `No curated registry covers ${ctx.req.record_type} in ${place} (${rt.reason}), and search found no official government source to use. TinyVerify does not fall back to unofficial sites.`,
+      message: skippedOfficial.length
+        ? `No curated registry covers ${ctx.req.record_type} in ${place} (${rt.reason}). Search found official pages (${[...new Set(skippedOfficial)].slice(0, 4).join(", ")}), but none looked like a register search, so no Agent run was started.`
+        : `No curated registry covers ${ctx.req.record_type} in ${place} (${rt.reason}), and search found no official government source to use. TinyVerify does not fall back to unofficial sites.`,
     };
   }
   const adapter = discoveredAdapter(chosen.host, chosen.url, chosen.title, place);

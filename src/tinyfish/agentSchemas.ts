@@ -113,7 +113,8 @@ export function searchGoal(args: {
     `Search the register for the ${args.subject} named "${args.query}".`,
     args.instructions,
     "Return every result on the first results page (up to 25): name, identifier (the licence, registration or company number), status, location, and record_url (the full URL of that result's detail page).",
-    "If the search shows no results, set page_state to 'no_results' and copy the page's no-results message into no_results_message.",
+    "Set page_state to 'no_results' only when the registry shows its own message that nothing matched, and copy that message exactly into no_results_message.",
+    "If the page did not load, the search did not run, results never appeared, or you are unsure, set page_state to 'error' instead and say what happened in no_results_message.",
     "If the search opens a single record directly, set page_state to 'single_record' and return it as the only candidate with record_url set to the current page URL.",
     ...COMMON_RULES,
   ].join("\n");
