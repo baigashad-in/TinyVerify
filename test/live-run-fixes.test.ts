@@ -105,10 +105,11 @@ describe("whole-page Fetch before Agent", () => {
 
   it("a bot wall is not fetched again; it goes straight to the Agent", async () => {
     const gw = new FakeGateway();
-    gw.setPage(ABR_REC, "bot-wall.md");
+    gw.setPage(`${CH}/company/00445790`, "bot-wall.md");
     gw.agentHandler = () => ({ status: "FAILED", run_id: null, result: null, error: "SITE_BLOCKED" });
-    await verify({ name: "Woolworths Group Limited", record_type: "abn", jurisdiction: "Australia", licence_number: "88 000 014 675" }, { gateway: gw });
+    await verify({ name: "Tesco PLC", record_type: "company", jurisdiction: "UK", licence_number: "00445790" }, { gateway: gw });
     assert.equal(gw.log.filter((l) => l.startsWith("fetch-full")).length, 0);
+    assert.equal(gw.log.filter((l) => l.startsWith("agent")).length, 1);
   });
 
   it("Monitor escalation tries a whole-page Fetch before the Agent", async () => {
@@ -137,16 +138,22 @@ describe("whole-page Fetch before Agent", () => {
 });
 
 describe("misread search pages", () => {
-  it("results that share no word with the query are not trusted; the whole page is fetched next", async () => {
+  it("results that share no word with the query are not trusted; the Agent searches instead", async () => {
     const gw = new FakeGateway();
     const q = "Exampleworks Ltd";
     // A misread page whose "names" are unrelated text.
-    gw.pages.set(chSearch(q), p(`[GENERAL NOTICE](${CH}/company/99000201)\n\n99000201 - Incorporated on 1 May 2020`));
-    gw.fullPages.set(chSearch(q), p(fixture("ch-search-example.md")));
+    gw.fullPages.set(chSearch(q), p(`[GENERAL NOTICE](${CH}/company/99000201)\n\n99000201 - Incorporated on 1 May 2020`));
+    gw.agentHandler = () => ({
+      status: "COMPLETED",
+      run_id: "s",
+      error: null,
+      result: { page_state: "results_list", candidates: [{ name: "EXAMPLEWORKS LIMITED", identifier: "99153983", status: "Active", record_url: `${CH}/company/99153983` }] },
+    });
     gw.pages.set(`${CH}/company/99153983`, p(fixture("ch-tesco.md").replaceAll("TESCO PLC", "EXAMPLEWORKS LIMITED").replaceAll("00445790", "99153983")));
     const r = await verify({ name: q, record_type: "company", jurisdiction: "UK" }, { gateway: gw });
     assert.equal(r.outcome, "verified", r.message);
     assert.ok(r.sources_checked.some((c) => /none shares a word/.test(c.detail ?? "")));
+    assert.equal(gw.log.filter((l) => l.startsWith("agent")).length, 1);
   });
 });
 

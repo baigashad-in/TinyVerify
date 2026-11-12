@@ -151,19 +151,19 @@ describe("verify: name path", () => {
     assert.equal(gw.log.filter((l) => l.startsWith("agent")).length, 0, "Companies House no-results is conclusive");
   });
 
-  it("searches ABN Lookup by name with TinyFish Agent and trusts its no-results answer", async () => {
-    // Fetch never returned result rows for ABN Lookup name searches in the live dump, so search goes to the Agent.
+  it("confirms an ABN Lookup no-results page with TinyFish Agent before saying no match", async () => {
+    // ABN Lookup's fetchable search lists active ABNs only, so "no results" there is not conclusive.
     const gw = new FakeGateway();
     const q = "Nonexistent Pty Ltd";
-    assert.equal(abr.search.mode, "agent");
-    gw.agentHandler = (a) => {
-      assert.match(a.url, /abr\.business\.gov\.au\/Search\/Index/);
-      return { status: "COMPLETED", run_id: "r", error: null, result: { page_state: "no_results", no_results_message: "No matching names", candidates: [] } };
-    };
+    if (abr.search.mode !== "fetch") throw new Error("expected fetch search");
+    assert.deepEqual(abr.search.fetchModes, ["full"]);
+    gw.fullPages.set(abr.search.url(q, "business"), { url: "a", final_url: null, title: null, text: "No records found" });
+    gw.fullPages.set(abr.search.url("Nonexistent", "business"), { url: "b", final_url: null, title: null, text: "No records found" });
+    gw.agentHandler = () => ({ status: "COMPLETED", run_id: "r", error: null, result: { page_state: "no_results", no_results_message: "No matching names", candidates: [] } });
     const r = await verify({ name: q, record_type: "business registration", jurisdiction: "NSW" }, { gateway: gw });
     assert.equal(r.outcome, "no_match");
-    assert.equal(gw.log.filter((l) => l.startsWith("fetch")).length, 0, "no Fetch attempt");
     assert.ok(gw.log.filter((l) => l.startsWith("agent")).length >= 1);
+    assert.equal(gw.log.filter((l) => l.startsWith("fetch ")).length, 0, "the default Markdown is not fetched; it never has the table");
   });
 
   it("uses TinyFish Agent for form-only registries and refuses to guess between people", async () => {

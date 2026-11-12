@@ -40,12 +40,14 @@ export class FakeGateway implements Gateway {
     this.pages.set(url, page(url, fixtureName, title));
   }
 
-  /** Pages returned for whole-page Fetch (include_selectors: ["body"]). Missing means a 404. */
+  /** Pages returned for whole-page Fetch (include_selectors: ["body"]). Falls back to `pages`. */
   fullPages = new Map<string, FetchedPage | { error: string }>();
 
   async fetchPage(url: string, opts: FetchOptions = {}): Promise<FetchOutcome> {
     this.log.push(`${opts.fullPage ? "fetch-full" : "fetch"} ${url}`);
-    const p = (opts.fullPage ? this.fullPages : this.pages).get(url);
+    // A whole-page read contains everything the default read has, so tests
+    // that only set `pages` also work for registries that fetch the whole page.
+    const p = opts.fullPage ? (this.fullPages.get(url) ?? this.pages.get(url)) : this.pages.get(url);
     if (!p) return { page: null, error: `404 for ${url}` };
     if ("error" in p) return { page: null, error: p.error };
     return { page: p, error: null };

@@ -23,3 +23,9 @@ Each fixture uses a different markdown shape on purpose (label on its own line,
 
 When a registry changes its layout, capture a fresh page with
 `npm run smoke` and add it here as a new fixture file.
+
+Two fixtures copy the exact layout of real TinyFish Fetch output saved with
+`npm run dump` on 12 Nov 2026 (whole-page Markdown, links removed):
+`ch-search-live-layout.md` and `abr-search-live-layout.md`. Only the Tesco and
+Woolworths rows are real; every other row was replaced with an invented name,
+address and placeholder number.
