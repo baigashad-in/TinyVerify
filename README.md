@@ -89,7 +89,7 @@ Example outputs, built from fictional test fixtures to show the shape: [`samples
 
 | Endpoint | What it does in TinyVerify |
 | :-- | :-- |
-| **Fetch** | Reads registry pages live (`ttl: 0`, markdown). Used for record pages with a stable URL (Companies House, ABN Lookup, GMC, CSLB, Corporations Canada) and for the Companies House search page. A deterministic parser per registry turns the page into fields and keeps the exact lines it used as evidence. Fetch's default "main content" extraction can drop result lists and record tables, so a page that loads but does not parse is fetched once more as the whole page (`include_selectors: ["body"]`) before the Agent is used. |
+| **Fetch** | Reads registry pages live (`ttl: 0`, markdown). Used for record pages with a stable URL (Companies House, ABN Lookup, GMC, CSLB, Corporations Canada) and for the Companies House and ABN Lookup search pages. A deterministic parser per registry turns the page into fields and keeps the exact lines it used as evidence. Fetch's default "main content" extraction can drop result lists and record tables, so a page that loads but does not parse is fetched once more as the whole page (`include_selectors: ["body"]`) before the Agent is used. |
 | **Agent** | Handles everything Fetch cannot: search forms (GMC, CSLB, Corporations Canada, Sunbiz), bot-protected pages (stealth browser, local proxy country), and any page the parser cannot read. Runs use `output_schema` so results come back as typed JSON with a verbatim `evidence_quote`, and a `page_state` field so a CAPTCHA or error page is reported as unavailable instead of "not found". |
 | **Search** | Finds the official registry for places without a curated adapter (for example a Texas nursing licence). Only government domains and known statutory regulators pass; aggregators like OpenCorporates are rejected. If no official source is found, the answer is `unsupported`, never a third-party site. |
 | **Monitor** | `POST /watch` verifies a record, then creates a Page Monitor on the record's own URL with a plain-English `purpose` and a webhook. Each scheduled run posts the fresh page to `/webhooks/tinyfish`. TinyVerify parses it, compares fields with the last known record and raises typed change events. |
@@ -164,7 +164,7 @@ Set `TINYVERIFY_API_TOKEN` to require `Authorization: Bearer <token>` on every r
 | :-- | :-- | :-- | :-- | :-- | :-- | :-- |
 | `uk-companies-house` | UK | business_registration | Company number | Fetch, Agent fallback | Fetch, Agent fallback | `/company/{number}` |
 | `uk-gmc` | UK | medical_licence | GMC reference number | Agent | Fetch, Agent fallback | `/registrants/{number}` |
-| `au-abr` | Australia | business_registration | ABN | Agent | Fetch (whole page), Agent fallback | `/ABN/View?abn={abn}` |
+| `au-abr` | Australia | business_registration | ABN | Fetch (whole page), Agent fallback | Fetch (whole page), Agent fallback | `/ABN/View?abn={abn}` |
 | `us-ca-cslb` | California, US | contractor_licence | CSLB licence number | Agent | Fetch, Agent fallback | `cslb.ca.gov/{number}` |
 | `ca-corporations-canada` | Canada (federal) | business_registration | Corporation number | Agent | Fetch, Agent fallback | `fdrlCrpDtls.html?corpId={number}` |
 | `us-fl-sunbiz` | Florida, US | business_registration | Document number | Agent (stealth) | Agent (stealth) | detail URL returned by Agent (long-term stability not confirmed; Agent re-reads by document number if it breaks) |
@@ -172,7 +172,9 @@ Set `TINYVERIFY_API_TOKEN` to require `Authorization: Bearer <token>` on every r
 
 ## Known limits
 
-* **What Fetch returns differs by page.** Checked live with `npm run dump` on 12 Nov 2026: Companies House record pages parse from the default Markdown. Companies House search pages lose the company names in the default Markdown and keep them in the whole page. ABN Lookup record pages parse only from the whole page. ABN Lookup name-search pages returned no result rows either way, so that search uses the Agent. GMC, CSLB, Corporations Canada and Sunbiz pages have not been dumped yet. `npm run dump -- <url>` checks any page for free.
+* **What Fetch returns differs by page.** Checked live with `npm run dump` on 12 Nov 2026 and tested against those exact files: Companies House record pages parse from the default Markdown. Companies House search pages, ABN Lookup search pages and ABN Lookup record pages parse only from the whole page (the default Markdown drops the names or the main table), so for those only the whole page is fetched. A per-URL Fetch error such as `proxy_error` is retried once before the Agent is used. GMC, CSLB, Corporations Canada searches and Sunbiz pages have not been dumped yet; `npm run dump` now includes probes for some of them.
+* **Agent "no results" is checked.** If the Agent says there were no results but its own note says the page did not load or the search did not run, the answer is `source_unavailable`, not `no_match` (seen live on New York's registry).
+* **Agent search lists vary.** The same Corporations Canada search returned the exact company in one run and only two subsidiaries in another, so the second run answered `multiple_matches`. TinyVerify never picks from a list it was not shown; giving the corporation number avoids the search.
 * **Misread pages are not trusted.** If a search page "parses" but no result shares a word with the query, it is treated as misread and the next read method is used, because a misread page once turned a real company into `no_match`.
 * **Layouts change.** Parsers are written against each registry's field labels as seen in November 2026. When a layout changes, reads fall back to TinyFish Agent and keep working, marked `agent_structured_output`. Add a fixture and update the parser to get back to the deterministic path.
 * **Agent extraction is model based.** It is constrained by a schema, must report the record number when one was requested, and links off the official domain are dropped. In one live run the Agent returned the page heading "ABN Lookup Record" as the name; a labelled name field ("Entity name") from the same answer now takes priority, and the agent's own answer is kept in `details.agent_name_answer`. Its quotes are not checked against the page, so for high-stakes decisions open `source.url` and confirm.
@@ -183,7 +185,7 @@ Set `TINYVERIFY_API_TOKEN` to require `Authorization: Bearer <token>` on every r
 * **Sunbiz** is behind bot protection, so reads and Monitor checks use TinyFish Agent, which costs more per check than Fetch.
 * **ABN Lookup** name search may show active ABNs only. Search by ABN to check a cancelled one.
 * **First page only.** Only the first page of search results is compared; a warning says when the registry reports more.
-* **Discovered registries** pass an official-domain check but are not hand-verified; they carry a warning and `curated: false`. Among official results, register-search pages are preferred over forms, tax and letter pages (a live run first picked a California tax-letter page).
+* **Discovered registries** pass an official-domain check but are not hand-verified; they carry a warning and `curated: false`. An official page is used only if its address or title looks like a register search (for US companies the query asks for the Secretary of State search). Information pages, guides, forms and tax letters are skipped; if nothing qualifies the answer is `unsupported` and no Agent run is started (live runs had picked a tax-letter page and a city information page).
 * **TinyFish credit.** Agent runs need wallet credit. When TinyFish reports an empty wallet, TinyVerify stops the request at once and says so, instead of trying every registry and name form.
 * This is a lookup tool, not legal advice.
 
@@ -195,7 +197,7 @@ Set `TINYVERIFY_API_TOKEN` to require `Authorization: Bearer <token>` on every r
 ## Development
 
 ```bash
-npm test            # 95 tests: parsers, matching, routing, pipeline outcomes, Monitor diffing, webhooks, API, regressions, live-run fixes
+npm test            # 106 tests: parsers, matching, routing, pipeline outcomes, Monitor diffing, webhooks, API, regressions, live-run fixes
 npm run typecheck
 npm run examples    # regenerate samples/fixture-examples from fixtures
 npm run smoke       # live checks through TinyFish (needs TINYFISH_API_KEY); SMOKE_MONITOR=1 also tests Monitor

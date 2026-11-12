@@ -1,11 +1,11 @@
 {
   "received": true,
-  "watch_id": "dd4f71a0-55d6-4d68-b44b-9bc1184f3333",
+  "watch_id": "0f9340d3-64cf-4feb-8142-ed562a17dba0",
   "ignored": null,
   "events": [
     {
-      "id": "0c1ee333-1ec4-4c8a-b088-71eea3deaa9f",
-      "watch_id": "dd4f71a0-55d6-4d68-b44b-9bc1184f3333",
+      "id": "cb93f098-37d9-46c6-906e-9f4ff697ef44",
+      "watch_id": "0f9340d3-64cf-4feb-8142-ed562a17dba0",
       "monitor_id": "mon-1",
       "monitor_run_id": "run-2",
       "detected_at": "2026-11-04T10:00:10.000Z",

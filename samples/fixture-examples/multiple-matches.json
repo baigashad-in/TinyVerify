@@ -42,18 +42,18 @@
       "query": "Example Ltd",
       "outcome": "ok",
       "result_count": 2,
-      "detail": "registry reports 2 matches"
+      "detail": "whole page; registry reports 2 matches"
     }
   ],
   "warnings": [],
   "tinyfish_calls": [
     {
       "endpoint": "fetch",
-      "action": "get_contents",
+      "action": "get_contents_full_page",
       "target": "https://find-and-update.company-information.service.gov.uk/search/companies?q=Example%20Ltd",
       "ok": true,
       "ms": 0,
-      "at": "2026-11-12T00:04:23.471Z",
+      "at": "2026-11-12T04:44:05.030Z",
       "run_id": null
     }
   ],
