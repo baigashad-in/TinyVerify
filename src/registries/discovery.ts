@@ -64,6 +64,10 @@ export function discoveryQuery(recordType: string, jurisdiction: string): string
   const t = recordType.toLowerCase();
   const licenceish = /licen[cs]e|licensing|board|doctor|nurse|physician|contractor|lawyer|attorney|pharmac|dentist|engineer|architect|realtor|real estate|electrician|plumber/.test(t);
   if (licenceish) return `${jurisdiction} ${recordType} license verification lookup official board`;
+  // US companies are registered with each state's Secretary of State. A live
+  // run with a generic query found a city information page instead (sf.gov).
+  const j = ` ${jurisdiction.toLowerCase().replace(/[^a-z]+/g, " ").trim()} `;
+  if (US_STATES.some((s) => j.includes(` ${s} `))) return `${jurisdiction.replace(/,?\s*United States$/i, "")} Secretary of State business entity search`;
   return /business|entity|company|corporation/.test(t)
     ? `${jurisdiction} official ${recordType} search registry`
     : `${jurisdiction} official ${recordType} business entity search registry`;
@@ -79,10 +83,13 @@ export interface DiscoveredRegistry {
 /** First official result; null when search found only unofficial sites. */
 /** Signs that an official page is a register search rather than a form, letter or tax service. */
 const GOOD_SIGNS: Record<"business" | "licence", RegExp> = {
-  business: /\b(sos|secretary of state|bizfile|business (entity |name )?search|entity search|corporations?( division)?|company search|business search|registry)\b/i,
-  licence: /\b(licen[cs]e (lookup|search|verification)|verify a licen[cs]e|verification|lookup|registry|register)\b/i,
+  business:
+    /\b(sos|dos|secretary of state|department of state|division of corporations|public inquiry|bizfile|business (entity |name )?search|entity search|corporations?( division)?|company search|business search|registry|register search)\b/i,
+  licence: /\b(licen[cs]e (lookup|search|verification)|look ?up a licen[cs]e|verify a licen[cs]e|verification|lookup|registry|register)\b/i,
 };
-const BAD_SIGNS = /\b(tax|franchise tax|e-?letter|status letter|forms?|pdf|faq|news|press release|jobs?|careers?)\b/i;
+/** Pages about a topic (how to register, guides, tax letters) rather than the register itself. */
+const BAD_SIGNS =
+  /\b(tax|franchise tax|e-?letter|status letter|forms?|pdf|faq|news|press release|jobs?|careers?|information|how to|guide|learn|steps|start(ing)? a business|register (a|your) business)\b/i;
 
 /**
  * Choose the best official result, not just the first one. Results are
@@ -95,20 +102,24 @@ const BAD_SIGNS = /\b(tax|franchise tax|e-?letter|status letter|forms?|pdf|faq|n
 export function pickOfficial(
   hits: SearchHit[],
   kind: "business" | "licence" = "licence",
-): { chosen: DiscoveredRegistry | null; rejected: string[] } {
+): { chosen: DiscoveredRegistry | null; rejected: string[]; skippedOfficial?: string[] } {
   const rejected: string[] = [];
   const official: { h: SearchHit; host: string; score: number }[] = [];
   for (const h of [...hits].sort((a, b) => a.position - b.position)) {
     const host = hostOf(h.url);
     if (isOfficialHost(host)) {
-      const text = `${host} ${h.url} ${h.title} ${h.snippet ?? ""}`;
+      // Host, URL and title only: snippets often mention the right agency on a page that is not its register.
+      const text = `${host} ${h.url.replace(/[-_/.?=&]+/g, " ")} ${h.title}`;
       official.push({ h, host: (host ?? "").replace(/^www\./, ""), score: (GOOD_SIGNS[kind].test(text) ? 2 : 0) - (BAD_SIGNS.test(text) ? 1 : 0) });
     } else if (host) {
       rejected.push(host);
     }
   }
   const best = official.reduce<(typeof official)[number] | null>((a, b) => (!a || b.score > a.score ? b : a), null);
-  if (!best) return { chosen: null, rejected };
+  // An official page that does not look like a register search is not used:
+  // each Agent run costs credit and minutes, and a live run spent 5 minutes on
+  // a city information page. The caller reports the official pages it skipped.
+  if (!best || best.score <= 0) return { chosen: null, rejected, skippedOfficial: official.map((o) => o.host) };
   return { chosen: { host: best.host, url: best.h.url, title: best.h.title, snippet: best.h.snippet }, rejected };
 }
 
