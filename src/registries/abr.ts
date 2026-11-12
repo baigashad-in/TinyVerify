@@ -33,7 +33,10 @@ export function parseAbrSearch(page: FetchedPage): SearchParse {
   const rawLines = text.replace(/\r\n?/g, "\n").split("\n");
   const byAbn = new Map<string, SearchCandidate>();
   for (const raw of rawLines) {
-    const m = /ABN\/View(?:\?abn=|\/)(\d[\d\s%20]{9,20}\d)/i.exec(raw);
+    // A row links to /ABN/View?abn=..., or (whole-page Fetch, links removed)
+    // starts with the ABN itself: "| 88 000 014 675    Active | WOOLWORTHS GROUP LIMITED | Entity Name | 2153 NSW |".
+    const m =
+      /ABN\/View(?:\?abn=|\/)(\d[\d\s%20]{9,20}\d)/i.exec(raw) ?? /^\s*\|?\s*(\d{2}\s?\d{3}\s?\d{3}\s?\d{3})\b/.exec(raw);
     if (!m) continue;
     const abn = (m[1] ?? "").replace(/\D/g, "");
     if (!isValidAbn(abn)) continue;
@@ -52,11 +55,12 @@ export function parseAbrSearch(page: FetchedPage): SearchParse {
             !NAME_TYPES.test(c) &&
             !/^\d[\d\s]{8,}/.test(c) &&
             !/^\d[\d\s]*$/.test(c) &&
-            !/^[A-Z]{2,3}\s*\d{4}$/.test(c),
+            !/^[A-Z]{2,3}\s*\d{4}$/.test(c) &&
+            !/^\d{4}\s*[A-Z]{2,3}$/.test(c),
         )
         .sort((a, b) => b.length - a.length)[0] ?? null;
     if (!name) continue;
-    const location = cells.find((c) => /^(NSW|VIC|QLD|WA|SA|TAS|ACT|NT)\b/.test(c)) ?? null;
+    const location = cells.find((c) => /^(\d{4}\s+)?(NSW|VIC|QLD|WA|SA|TAS|ACT|NT)(\s+\d{4})?$/.test(c)) ?? null;
     const prev = byAbn.get(abn);
     if (!prev || (nameType && /entity name/i.test(nameType))) {
       byAbn.set(abn, {
@@ -120,7 +124,7 @@ export function parseAbrRecord(page: FetchedPage): ParseOutcome {
       main_business_location: location?.value ?? null,
       abn_last_updated: toIsoDate(updated?.value ?? null, "DMY"),
     },
-    evidence: [status.evidence, entityName.evidence, header?.[0], gst?.evidence].filter((e): e is string => !!e),
+    evidence: [status.evidence, entityName.evidence, header?.[0]?.replace(/\s+/g, " ").trim(), gst?.evidence].filter((e): e is string => !!e),
     registry_timestamp: extracted?.value ?? null,
   });
   return { ok: true, record };
@@ -151,17 +155,22 @@ export const abr: RegistryAdapter = {
     return isValidAbn(s) ? s : null;
   },
   recordUrl: (id) => `${BASE}/ABN/View?abn=${id}`,
-  // Name search goes straight to the Agent. In the live dump (12 Nov 2026)
-  // /Search/ResultsActive?SearchText=... returned no result rows through Fetch,
-  // neither as default Markdown (211 characters) nor as the whole page, so a
-  // Fetch attempt only added delay. The Agent search from /Search/Index worked
-  // live (20 results). parseAbrSearch is kept for pages that do list rows.
+  // The live dump (12 Nov 2026) showed the result table only in the whole
+  // page (default Markdown keeps just the "found 8 matches" sentence), with
+  // links removed. So: whole-page Fetch only, then the Agent. This search
+  // lists active ABNs only, so "no results" is confirmed by the Agent.
   search: {
-    mode: "agent",
-    url: `${BASE}/Search/Index`,
+    mode: "fetch",
+    url: (q) => `${BASE}/Search/ResultsActive?SearchText=${encodeURIComponent(q)}`,
+    parse: parseAbrSearch,
+    noResultsIsConclusive: false,
+    fetchModes: ["full"],
+    agentFallbackUrl: `${BASE}/Search/Index`,
     agentInstructions: () =>
       "Search by name. If there is an option to include cancelled or historical ABNs, include them. Return the 11-digit ABN as the identifier.",
   },
+  // The default Markdown of an ABN record page keeps only the trading-names table.
+  recordFetchModes: ["full"],
   parseRecord: parseAbrRecord,
   normalizeStatus,
   monitorPurpose: (r) =>

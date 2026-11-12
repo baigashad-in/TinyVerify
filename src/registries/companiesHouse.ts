@@ -62,7 +62,7 @@ export function parseCompaniesHouseSearch(page: FetchedPage): SearchParse {
 }
 
 /** A result line such as "00445790 - Incorporated on 27 November 1947" or "SC123456 - Dissolved on 1 May 2020". */
-const RESULT_META = /^([A-Z]{2}\d{6}|\d{8})\s+-\s+(Incorporated|Dissolved|Registered|Removed|Converted|Closed)\b/i;
+const RESULT_META = /^([A-Z]{2}\d{6}|\d{8})\s+-\s+(Incorporated|Dissolved|Registered|Removed|Converted|Closed|Opened|First UK establishment)\b/i;
 
 /**
  * Fallback for search pages whose Markdown has no links. Seen live on
@@ -112,11 +112,13 @@ function parsePlainSearchResults(text: string, links: string[] | undefined): Sea
     if (!name || GENERIC_HEADING.test(name) || UK_POSTCODE.test(name) || name.length > 160) continue;
     seen.add(number);
     const dissolved = /dissolved on|removed on/i.test(meta);
+    // Keep what the result line says after the number, e.g. "Incorporated on 31 March 2017 - Liquidation".
+    const statusText = meta.replace(/^([A-Z]{2}\d{6}|\d{8})\s+-\s+/i, "").trim();
     const next = plain(raw[i + 1] ?? "");
     out.push({
       name,
       identifier: number,
-      status_raw: dissolved ? "Dissolved" : "Not dissolved (status shown on record page)",
+      status_raw: dissolved ? "Dissolved" : statusText || null,
       record_url: `${BASE}/company/${number}`,
       location: next && !RESULT_META.test(next) && !isHeading(raw[i + 1] ?? "") && !/^matching previous names/i.test(next) ? next : null,
       matched_previous_name: previous !== null,
@@ -213,6 +215,9 @@ export const companiesHouse: RegistryAdapter = {
     url: (q) => `${BASE}/search/companies?q=${encodeURIComponent(q)}`,
     parse: parseCompaniesHouseSearch,
     noResultsIsConclusive: true,
+    // The live dump (12 Nov 2026) showed the default Markdown drops every
+    // company name on this page, so only the whole page is fetched.
+    fetchModes: ["full"],
     agentFallbackUrl: `${BASE}/search/companies`,
     agentInstructions: () => "Use the 'Search for a company' box and the Companies tab of the results.",
   },

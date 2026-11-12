@@ -61,6 +61,12 @@ export interface FetchSearchSpec {
    * before the tool reports no match.
    */
   noResultsIsConclusive: boolean;
+  /**
+   * Which Fetch versions to try, in order. "default" is Fetch's main-content
+   * Markdown, "full" the whole page. Leave out a version that a live dump
+   * showed never parses, to save the call. Default: ["default", "full"].
+   */
+  fetchModes?: ("default" | "full")[];
   /** Search form used when the fetch view cannot be read. */
   agentFallbackUrl: string;
   agentInstructions(query: string, kind: EntityKind | null): string;
@@ -93,6 +99,8 @@ export interface RegistryAdapter {
   lastFirstNames?: boolean;
   /** false for registries found at run time: no parser, so records are read with TinyFish Agent only. */
   curated?: boolean;
+  /** Fetch versions to try for record pages, in order (see FetchSearchSpec.fetchModes). Default: ["default", "full"]. */
+  recordFetchModes?: ("default" | "full")[];
 
   /** Return the canonical identifier, or null when the input is not a valid format. */
   normalizeIdentifier(raw: string): string | null;
