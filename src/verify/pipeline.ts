@@ -77,6 +77,11 @@ function check(ctx: Ctx, adapter: RegistryAdapter, c: Omit<SourceCheck, "registr
   ctx.checks.push({ registry_id: adapter.id, registry_name: adapter.name, checked_at: ctx.now().toISOString(), ...c });
 }
 
+/** True when the two names share at least one core word (typos allowed). */
+function sharesWord(a: string, b: string, kind: Ctx["kind"]): boolean {
+  return requestCoverage(a, b, kind) > 0 || requestCoverage(b, a, kind) > 0;
+}
+
 /** Errors that stop the whole request: a bad key or an empty wallet fails every later call too. */
 function isFatal(err: unknown): boolean {
   return err instanceof TinyVerifyError && (err.code === "tinyfish_auth" || err.code === "tinyfish_billing");
@@ -389,6 +394,23 @@ async function searchCandidates(adapter: RegistryAdapter, ctx: Ctx, query: strin
         const f = await ctx.gw.fetchPage(url, mode === "full" ? { fullPage: true } : { links: true });
         if (f.page?.text) {
           const sp = spec.parse(f.page);
+          // Registry search engines return names close to the query. If no
+          // result shares a single word with it, the page was misread (a live
+          // run took section titles and addresses as names), so it is not
+          // trusted as an answer and the next read method is tried.
+          if (sp.kind === "results" && sp.candidates.length > 0 && !sp.candidates.some((c) => sharesWord(query, c.name, ctx.kind))) {
+            check(ctx, adapter, {
+              step: "search",
+              method: "tinyfish_fetch",
+              url,
+              query,
+              outcome: "unparsed",
+              result_count: null,
+              detail: `${prefix}${sp.candidates.length} results but none shares a word with the query; treated as misread`,
+            });
+            retry = true;
+            continue;
+          }
           if (sp.kind === "results") {
             const total = sp.total ? `registry reports ${sp.total} matches` : null;
             check(ctx, adapter, { step: "search", method: "tinyfish_fetch", url, query, outcome: "ok", result_count: sp.candidates.length, detail: [mode === "full" ? "whole page" : null, total].filter(Boolean).join("; ") || null });

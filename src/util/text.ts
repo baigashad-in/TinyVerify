@@ -35,11 +35,16 @@ export function cleanLines(text: string): string[] {
         if (cells.length === 0) continue;
         part = cells.join(" | ");
       } else {
-        part = part
-          .replace(/^\s*#{1,6}\s+/, "")
-          .replace(/^\s*>\s?/, "")
-          .replace(/^\s*(?:[-*+•]|\d+[.)])\s+/, "")
-          .replace(/^\s*\|+\s*|\s*\|+\s*$/g, "");
+        // Strip block markers until none are left: a list item can hold a
+        // heading ("- ### TESCO PLC" on Companies House search pages).
+        for (let prev = ""; prev !== part; ) {
+          prev = part;
+          part = part
+            .replace(/^\s*#{1,6}\s+/, "")
+            .replace(/^\s*>\s?/, "")
+            .replace(/^\s*(?:[-*+•]|\d+[.)])\s+/, "")
+            .replace(/^\s*\|+\s*|\s*\|+\s*$/g, "");
+        }
       }
       part = part.replace(/\s+/g, " ").trim();
       if (part.length === 0 || /^[|:\-\s]+$/.test(part)) continue;

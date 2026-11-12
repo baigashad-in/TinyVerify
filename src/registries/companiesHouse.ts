@@ -65,48 +65,62 @@ export function parseCompaniesHouseSearch(page: FetchedPage): SearchParse {
 const RESULT_META = /^([A-Z]{2}\d{6}|\d{8})\s+-\s+(Incorporated|Dissolved|Registered|Removed|Converted|Closed)\b/i;
 
 /**
- * Fallback for search pages whose Markdown has no links (Fetch's main-content
- * extraction can render result headings as plain text). Each result has its
- * name, then optionally "Matching previous names:" and a previous name, then
- * a line that starts with the company number. If Fetch returned the page's
- * links, a number must also appear as a /company/ link to be accepted.
+ * Fallback for search pages whose Markdown has no links. Seen live on
+ * 12 Nov 2026 (npm run dump): the whole-page Markdown shows each result as a
+ * heading ("- ### TESCO PLC") followed by "00445790 - Incorporated on ...",
+ * while the default main-content Markdown drops the names completely. So a
+ * result is accepted only when its name line is a Markdown heading; without
+ * one the page is "unparsed" and the caller fetches the whole page or uses
+ * the Agent. Taking the line above the number instead gave section titles and
+ * addresses as names, which turned a real company into no_match.
  */
+const GENERIC_HEADING = /^(company|companies|officer|officers|disqualified officers?|search) results?$|matches found|^search for/i;
+const UK_POSTCODE = /\b[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b/;
+
 function parsePlainSearchResults(text: string, links: string[] | undefined): SearchCandidate[] {
-  const lines = cleanLines(text);
+  const raw = text
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
+  const isHeading = (l: string) => /^(?:(?:[-*+]|\d+[.)])\s+)?#{1,6}\s+\S/.test(l);
+  const plain = (l: string) => cleanLines(l)[0] ?? "";
   const linked = links?.length
     ? new Set(links.map((l) => /\/company\/([A-Z0-9]{8})(?:[/?#]|$)/i.exec(l)?.[1]?.toUpperCase()).filter((x): x is string => !!x))
     : null;
   const out: SearchCandidate[] = [];
   const seen = new Set<string>();
-  for (let i = 0; i < lines.length; i++) {
-    const m = RESULT_META.exec(lines[i] ?? "");
+  for (let i = 0; i < raw.length; i++) {
+    const meta = plain(raw[i] ?? "");
+    const m = RESULT_META.exec(meta);
     if (!m) continue;
     const number = (m[1] ?? "").toUpperCase();
     if (seen.has(number) || (linked && linked.size > 0 && !linked.has(number))) continue;
-    // Walk back over an optional "Matching previous names:" block to the result name.
+    // Walk back over an optional "Matching previous names:" block to the heading.
     let j = i - 1;
     let previous: string | null = null;
     for (let k = i - 1; k >= Math.max(0, i - 4); k--) {
-      if (/^matching previous names:?$/i.test(lines[k] ?? "")) {
-        previous = lines[k + 1] ?? null;
+      if (/^matching previous names:?$/i.test(plain(raw[k] ?? ""))) {
+        previous = plain(raw[k + 1] ?? "") || null;
         j = k - 1;
         break;
       }
     }
-    const name = (lines[j] ?? "").trim();
-    if (!name || RESULT_META.test(name) || name.length > 160) continue;
+    const nameLine = raw[j] ?? "";
+    if (!isHeading(nameLine)) continue;
+    const name = plain(nameLine);
+    if (!name || GENERIC_HEADING.test(name) || UK_POSTCODE.test(name) || name.length > 160) continue;
     seen.add(number);
-    const statusLine = lines[i] ?? "";
-    const dissolved = /dissolved on|removed on/i.test(statusLine);
-    const next = lines[i + 1] ?? null;
+    const dissolved = /dissolved on|removed on/i.test(meta);
+    const next = plain(raw[i + 1] ?? "");
     out.push({
       name,
       identifier: number,
       status_raw: dissolved ? "Dissolved" : "Not dissolved (status shown on record page)",
       record_url: `${BASE}/company/${number}`,
-      location: next && !RESULT_META.test(next) && !/^matching previous names/i.test(next) ? next : null,
+      location: next && !RESULT_META.test(next) && !isHeading(raw[i + 1] ?? "") && !/^matching previous names/i.test(next) ? next : null,
       matched_previous_name: previous !== null,
-      snippet: [previous ? `Previous name: ${previous}` : null, statusLine].filter(Boolean).join(" ; ") || null,
+      snippet: [previous ? `Previous name: ${previous}` : null, meta].filter(Boolean).join(" ; ") || null,
     });
   }
   return out;
