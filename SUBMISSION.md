@@ -14,7 +14,7 @@
 
 | Criterion | How TinyVerify handles it |
 | :-- | :-- |
-| Accuracy | Live reads (`ttl: 0`) of the official page, with a whole-page re-read before any Agent fallback; deterministic parsers keep verbatim evidence lines; the page must show the requested number (Agent results without it are rejected); the opened record must match the chosen search row and the request; ABN check digit |
+| Accuracy | Live reads (`ttl: 0`) of the official page, with a whole-page re-read before any Agent fallback; compliance flags only from the record's own fields; deterministic parsers keep verbatim evidence lines; the page must show the requested number (Agent results without it are rejected); the opened record must match the chosen search row and the request; ABN check digit |
 | Coverage | 6 curated registries, 3 record types, 4 countries; discovery for other places |
 | Ambiguity | `multiple_matches`, `no_match` with scored near misses, `name_mismatch`, "CA" checked as both Canada and California, longer place names read with a disclosed assumption, name variants and previous names; an unread name form gives `source_unavailable`, never `no_match` |
 | Monitor reliability | Field diff ignores timestamp noise; flags and actions compared only between reads of the same kind, so switching between Fetch and Agent raises no false alerts; Agent escalation behind bot walls; forced Agent re-reads for registries found by Search; one `record_unreadable` alert then `record_recovered`; dedupe and token check |
@@ -33,7 +33,7 @@ Fetch (record and search pages), Agent (search forms, bot-protected pages, parse
 | Made-up company name | multiple_matches | no, should be no_match | a candidate must contain 75% of the requested words |
 | Woolworths ABN by number | name_mismatch | no | Agent's labelled "Entity name" beats its page-heading answer |
 | Woolworths by name | verified, name shown as "ABN Lookup Record" | record right, name wrong | same as above |
-| Canadian National Railway by name | verified, annual filing overdue flag | yes | none |
+| Canadian National Railway by name | verified, annual filing overdue flag | record yes; the flag was false (found in v7, see the fourth run) | none at the time |
 | "CA", Sunbiz, New York | wallet empty, not run | n/a | stops at the first billing error with a clear message |
 
 ABN Lookup record pages also did not parse from Fetch's default Markdown in v2. v3 retries them as the whole page before using the Agent. This is not yet confirmed live.
@@ -63,19 +63,53 @@ v5 got 7 of 9 cases right. The parsers were then checked against the exact Fetch
 | Made-up name | no_match, Fetch only | yes | same |
 | Woolworths ABN by number | verified, but the whole-page Fetch hit `proxy_error` and a 71 s Agent run was used | yes, costly | per-URL Fetch errors are retried once; only the whole page is read |
 | Woolworths by name | verified after a 211 s Agent search | yes, slow | the whole page has the result table (no links); parser reads it, so no Agent |
-| Canadian National Railway by name | verified | yes | none |
+| Canadian National Railway by name | verified | record yes; same false flag | none at the time |
 | "CA" Canadian National Railway | multiple_matches (Agent listed only subsidiaries); 5 min on a San Francisco info page | partly | discovery asks for the Secretary of State search and skips pages that do not look like a register |
 | Publix on Sunbiz | verified (Agent) | yes | Sunbiz detail page added to `npm run dump` to write a parser |
 | Pfizer in New York | no_match | no: the Agent said the page never loaded | an Agent "no results" with a failure note is `source_unavailable` |
 
+## Fourth live run (12 Nov 2026, v6) and what changed in v7
+
+All 9 outcomes were right, and 6 of 9 came back in under 25 seconds with Fetch only. Three problems remained: slow Agent searches, one wrong compliance flag, and a wasted 10 minutes on a page that was not a search. A new `npm run dump` saved the Corporations Canada and Sunbiz pages, and the parsers were written and tested against those exact files.
+
+| Case | v6 result | Right? | v7 change |
+| :-- | :-- | :-- | :-- |
+| Tesco PLC by number | verified, Fetch, 1.5 s | yes | none |
+| Rolls-Royce by name | verified, Fetch only, 21 s | yes | none |
+| Made-up name | no_match, Fetch only, 3.5 s | yes | none |
+| Woolworths ABN by number | verified, whole-page Fetch, 4 s | yes | none |
+| Woolworths by name | verified, Fetch only, 8 s | yes | none |
+| Canadian National Railway by name | verified after a 223 s Agent search, with an `annual_filings_overdue` flag | record yes, flag no | the search is a Fetch of the registry's own result URL; flags come from the year rows ("2024 - Filed"), not from alert text that every record page carries |
+| "CA" Canadian National Railway | Canada verified (139 s Agent search, same false flag), then 10 min on ca.gov's "Secretary of State (SOS)" directory card: two 300 s Agent timeouts | record yes, slow | same Canada fixes; a company register page must say it searches, directory cards are skipped, and a discovered page is not retried with another name form |
+| Publix on Sunbiz | verified in 629 s: the first Agent search timed out, the second name form worked (260 s), and the record was read by the Agent because neither Fetch version parsed | yes, slow | the name list is read with Fetch; the record parser splits labels glued to values ("StatusACTIVE") |
+| Pfizer in New York | source_unavailable after two Agent runs, 9 min (`page_state=error`) | yes, slow | one Agent run on a discovered page, then stop |
+
+How the false flag was found: the Canadian National Railway page lists its 2024, 2025 and 2026 annual filings as "Filed", yet carries the text "Two consecutive annuals filings are overdue ... notice of its intent to dissolve". Two dissolved corporations fetched for comparison carry the same text and show "2025 - Overdue" rows. So the text is a page template and the year rows are the record.
+
+## Fifth live run (12 Nov 2026, v7) and what changed in v8
+
+All 9 outcomes were right. 8 of 9 cases used Fetch only, and the whole run used one Agent run (New York). Canadian National Railway went from 225 s to 3 s and Publix from 629 s to 12 s, with no false flag. `npm run dump` confirmed every parser on the exact URLs v7 sends.
+
+| Case | v7 result | Right? | v8 change |
+| :-- | :-- | :-- | :-- |
+| Tesco PLC by number | verified, Fetch only, 123 s: one Fetch call took 123 s (1.5 s in v6) | yes, slow once | none in code; recorded as a known limit (cause on the TinyFish side unknown) |
+| Rolls-Royce by name | verified, Fetch only, 9 s | yes | none |
+| Made-up name | no_match, Fetch only, 3 s | yes | none |
+| Woolworths ABN by number | verified, whole-page Fetch, 4 s | yes | none |
+| Woolworths by name | verified, Fetch only, 4 s | yes | none |
+| Canadian National Railway by name | verified, Fetch only, 3 s; no flag; filings "2026 Filed; 2025 Filed; 2024 Filed" | yes | the registered office address is now read from the main-content page too (it was empty) |
+| "CA" Canadian National Railway | verified (Canada), 7 s; for California, Search returned only ca.gov pages that were not a register search, so no Agent run | yes, but only the message said California was skipped | a warning now names the place not checked, and the discovery step lists the skipped pages' titles and links |
+| Publix on Sunbiz | verified, Fetch only, 12 s | yes | none |
+| Pfizer in New York | source_unavailable after one Agent run, 268 s (was two runs, 9 min) | yes, honest | the smoke expectation now says source_unavailable is the right answer when New York's search does not load |
+
 ## Before you submit
 
-1. Run `npm test` (should be 106 passing).
+1. Run `npm test` (should be 132 passing).
 2. Run `npm run dump` (Fetch only, inside TinyFish's free daily Fetch allowance). It prints whether each parser reads the real Fetch output, for the default and the whole-page version. If a line says a parser failed, send the matching file from `samples/raw/`.
 3. Add TinyFish credit if the wallet is empty, then run `npm run smoke` and read `samples/live-<date>/summary.json`. Each line now shows the `expected` outcome. Open each `source.url` and compare status and numbers by hand.
-4. Monitor create and run-now were confirmed live on 11 Nov 2026 (Tesco watch, no change reported). Run `SMOKE_MONITOR=1 npm run smoke` for the full create, recheck and delete cycle.
+4. Monitor create and run-now were confirmed live on 11 Nov 2026 (Tesco watch, no change reported). v7 changed how Corporations Canada and Sunbiz records are read, so run `SMOKE_MONITOR=1 npm run smoke`: it now watches and rechecks Tesco, Canadian National Railway and Publix, then deletes the three Monitors. Expect `recheck_read_via` to be `tinyfish_monitor` for the first two and `tinyfish_monitor+fetch` for Publix (its main-content page has no labels), with no events. If any line differs, send the matching `monitor-*.json` files.
 5. Start the server with a public `PUBLIC_BASE_URL` (a tunnel is fine), watch one record, and wait for one scheduled run. If the server log shows "TinyFish webhook ignored", the payload shape differs from the docs; map the logged keys in `handleWebhook` (`src/monitor/service.ts`).
-6. Still not confirmed live: Sunbiz and Corporations Canada searches through Fetch (probes are in `npm run dump`), whether Sunbiz detail links stay valid, and how GMC and CSLB pages render through Fetch. Each falls back to the Agent if wrong; check `extraction` and `calls` in the smoke output.
+6. Still not confirmed live: the Sunbiz sort-key rule for names unlike the 20 seen (a wrong key costs one Agent confirmation, not a wrong answer), whether Sunbiz detail links stay valid for months, and how GMC and CSLB pages render through Fetch. Each falls back to the Agent if wrong; check `extraction` and `calls` in the smoke output.
 7. Post on LinkedIn tagging TinyFish, and share in #showcase on the TinyFish Discord.
 
 ## LinkedIn post draft

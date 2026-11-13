@@ -31,7 +31,12 @@ const cases: { label: string; request: VerifyRequestInput; expect?: string }[] =
   { label: "ca-federal-corp-by-name", request: { name: "Canadian National Railway Company", record_type: "corporation", jurisdiction: "Canada" }, expect: "verified" },
   { label: "ca-ambiguous-code", request: { name: "Canadian National Railway Company", record_type: "corporation", jurisdiction: "CA" }, expect: "verified (Canada) or multiple_matches (if California also lists it)" },
   { label: "fl-sunbiz-by-name", request: { name: "Publix Super Markets, Inc.", record_type: "corporation", jurisdiction: "Florida" }, expect: "verified" },
-  { label: "discovery-us-state-business", request: { name: "Pfizer Inc.", record_type: "business entity", jurisdiction: "New York" }, expect: "verified or multiple_matches" },
+  {
+    label: "discovery-us-state-business",
+    request: { name: "Pfizer Inc.", record_type: "business entity", jurisdiction: "New York" },
+    // In three live runs (v5 to v7) the Agent could not complete New York's search app, so the honest answer was source_unavailable.
+    expect: "verified or multiple_matches; source_unavailable if the New York search does not load for the Agent",
+  },
 ];
 
 if (process.env.SMOKE_GMC_NUMBER) {
@@ -93,12 +98,34 @@ if (process.env.SMOKE_MONITOR === "1") {
     defaultCron: "CRON_TZ=UTC 41 6 * * *",
     agentEscalation: true,
   });
-  const out = await svc.watch({ request: cases[0]?.request });
-  const re = await svc.recheck(out.watch.id);
-  await writeFile(join(dir, "monitor-watch.json"), JSON.stringify(out, null, 2));
-  await writeFile(join(dir, "monitor-recheck.json"), JSON.stringify(re, null, 2));
-  console.log(JSON.stringify({ case: "monitor", monitor_id: out.watch.monitor_id, baseline_readable: out.watch.monitor_baseline_readable, recheck_events: re.events.length }));
-  if (process.env.SMOKE_KEEP_MONITOR !== "1") await svc.unwatch(out.watch.id);
+  // One record per read path: Companies House (main-content page parses),
+  // Corporations Canada (main-content page parses) and Sunbiz (only the whole
+  // page parses, so each check should escalate to a whole-page Fetch).
+  const watched = ["uk-company-by-number", "ca-federal-corp-by-name", "fl-sunbiz-by-name"];
+  for (const label of watched) {
+    const c = cases.find((x) => x.label === label);
+    if (!c) continue;
+    try {
+      const out = await svc.watch({ request: c.request });
+      const re = await svc.recheck(out.watch.id);
+      await writeFile(join(dir, `monitor-${label}-watch.json`), JSON.stringify(out, null, 2));
+      await writeFile(join(dir, `monitor-${label}-recheck.json`), JSON.stringify(re, null, 2));
+      console.log(
+        JSON.stringify({
+          case: `monitor ${label}`,
+          monitor_id: out.watch.monitor_id,
+          baseline_readable: out.watch.monitor_baseline_readable,
+          recheck_read_via: re.read_via,
+          recheck_events: re.events.map((e) => e.type),
+        }),
+      );
+      if (process.env.SMOKE_KEEP_MONITOR !== "1") await svc.unwatch(out.watch.id);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.log(JSON.stringify({ case: `monitor ${label}`, error: msg }));
+      if (msg.includes(BILLING_MESSAGE)) break;
+    }
+  }
 }
 
 await writeFile(join(dir, "summary.json"), JSON.stringify(summary, null, 2));
