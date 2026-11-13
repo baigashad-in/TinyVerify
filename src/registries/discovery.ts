@@ -80,16 +80,22 @@ export interface DiscoveredRegistry {
   snippet: string;
 }
 
-/** First official result; null when search found only unofficial sites. */
 /** Signs that an official page is a register search rather than a form, letter or tax service. */
 const GOOD_SIGNS: Record<"business" | "licence", RegExp> = {
   business:
     /\b(sos|dos|secretary of state|department of state|division of corporations|public inquiry|bizfile|business (entity |name )?search|entity search|corporations?( division)?|company search|business search|registry|register search)\b/i,
   licence: /\b(licen[cs]e (lookup|search|verification)|look ?up a licen[cs]e|verify a licen[cs]e|verification|lookup|registry|register)\b/i,
 };
-/** Pages about a topic (how to register, guides, tax letters) rather than the register itself. */
+/**
+ * A business page must also say it searches. A live run (12 Nov 2026) chose
+ * the California state portal's directory entry "Secretary of State (SOS)"
+ * (ca.gov/departments/275) and spent two 5-minute Agent timeouts on it: the
+ * agency name matched, but the page is a directory card, not a search.
+ */
+const SEARCH_ACTION = /\b(search|look ?up|inquiry|bizfile|find)\b/i;
+/** Pages about a topic (how to register, guides, tax letters, directories) rather than the register itself. */
 const BAD_SIGNS =
-  /\b(tax|franchise tax|e-?letter|status letter|forms?|pdf|faq|news|press release|jobs?|careers?|information|how to|guide|learn|steps|start(ing)? a business|register (a|your) business)\b/i;
+  /\b(tax|franchise tax|e-?letter|status letter|forms?|pdf|faq|news|press release|jobs?|careers?|information|how to|guide|learn|steps|start(ing)? a business|register (a|your) business|departments|agenc(y|ies)|about( us)?|contact( us)?|directory)\b/i;
 
 /**
  * Choose the best official result, not just the first one. Results are
@@ -102,7 +108,7 @@ const BAD_SIGNS =
 export function pickOfficial(
   hits: SearchHit[],
   kind: "business" | "licence" = "licence",
-): { chosen: DiscoveredRegistry | null; rejected: string[]; skippedOfficial?: string[] } {
+): { chosen: DiscoveredRegistry | null; rejected: string[]; skippedOfficial?: string[]; skippedPages?: { host: string; url: string; title: string }[] } {
   const rejected: string[] = [];
   const official: { h: SearchHit; host: string; score: number }[] = [];
   for (const h of [...hits].sort((a, b) => a.position - b.position)) {
@@ -110,7 +116,8 @@ export function pickOfficial(
     if (isOfficialHost(host)) {
       // Host, URL and title only: snippets often mention the right agency on a page that is not its register.
       const text = `${host} ${h.url.replace(/[-_/.?=&]+/g, " ")} ${h.title}`;
-      official.push({ h, host: (host ?? "").replace(/^www\./, ""), score: (GOOD_SIGNS[kind].test(text) ? 2 : 0) - (BAD_SIGNS.test(text) ? 1 : 0) });
+      const good = GOOD_SIGNS[kind].test(text) && (kind === "licence" || SEARCH_ACTION.test(text));
+      official.push({ h, host: (host ?? "").replace(/^www\./, ""), score: (good ? 2 : 0) - (BAD_SIGNS.test(text) ? 1 : 0) });
     } else if (host) {
       rejected.push(host);
     }
@@ -119,7 +126,14 @@ export function pickOfficial(
   // An official page that does not look like a register search is not used:
   // each Agent run costs credit and minutes, and a live run spent 5 minutes on
   // a city information page. The caller reports the official pages it skipped.
-  if (!best || best.score <= 0) return { chosen: null, rejected, skippedOfficial: official.map((o) => o.host) };
+  if (!best || best.score <= 0) {
+    return {
+      chosen: null,
+      rejected,
+      skippedOfficial: official.map((o) => o.host),
+      skippedPages: official.map((o) => ({ host: o.host, url: o.h.url, title: o.h.title })),
+    };
+  }
   return { chosen: { host: best.host, url: best.h.url, title: best.h.title, snippet: best.h.snippet }, rejected };
 }
 

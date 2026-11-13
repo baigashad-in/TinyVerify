@@ -340,6 +340,8 @@ export async function readRecord(
 type SearchOutcome =
   | { kind: "results"; candidates: SearchCandidate[]; total: number | null }
   | { kind: "no_results" }
+  /** An alphabetical list (FetchSearchSpec.browseKey) was read but has no close name. */
+  | { kind: "browse_miss"; candidates: SearchCandidate[] }
   | { kind: "unavailable"; reason: string };
 
 async function agentSearch(adapter: RegistryAdapter, ctx: Ctx, query: string, url: string, instructions: string): Promise<SearchOutcome> {
@@ -418,6 +420,20 @@ async function searchCandidates(adapter: RegistryAdapter, ctx: Ctx, query: strin
         const f = await fetchOnce(ctx, url, mode === "full" ? { fullPage: true } : { links: true });
         if (f.page?.text) {
           const sp = spec.parse(f.page);
+          // An alphabetical list always has rows, close or not. Rows that are
+          // only neighbours in the alphabet are not an answer either way.
+          if (sp.kind === "results" && spec.browseKey && !sp.candidates.some((c) => nameScore(ctx.req.name, c.name, ctx.kind) >= MATCH_THRESHOLDS.weak)) {
+            check(ctx, adapter, {
+              step: "search",
+              method: "tinyfish_fetch",
+              url,
+              query,
+              outcome: "no_results",
+              result_count: 0,
+              detail: `${prefix}alphabetical list from "${spec.browseKey(query)}" has ${sp.candidates.length} rows but no close name`,
+            });
+            return { kind: "browse_miss", candidates: sp.candidates };
+          }
           // Registry search engines return names close to the query. If no
           // result shares a single word with it, the page was misread (a live
           // run took section titles and addresses as names), so it is not
@@ -584,17 +600,17 @@ async function verifyWithAdapter(adapter: RegistryAdapter, ctx: Ctx): Promise<Ad
   let nearMisses: Scored<SearchCandidate>[] = [];
   let answered = false;
   const unread: { variant: string; reason: string }[] = [];
+  const browseKey = adapter.search.mode === "fetch" ? adapter.search.browseKey : undefined;
+  const searchedKeys = new Set<string>();
+  let browseMiss = false;
+  const tried: string[] = [];
 
-  for (const variant of variants) {
-    const sr = await searchCandidates(adapter, ctx, variant);
-    if (sr.kind === "unavailable") {
-      unread.push({ variant, reason: sr.reason });
-      continue;
-    }
-    answered = true;
-    if (sr.kind === "no_results") continue;
+  const scoreAll = (cands: SearchCandidate[]): Scored<SearchCandidate>[] =>
+    cands.map((c) => ({ item: c, score: nameScore(req.name, c.name, ctx.kind), coverage: requestCoverage(req.name, c.name, ctx.kind) }));
 
-    const scored = sr.candidates.map((c) => ({ item: c, score: nameScore(req.name, c.name, ctx.kind), coverage: requestCoverage(req.name, c.name, ctx.kind) }));
+  /** Turn one set of search results into a final answer, or null to keep looking. */
+  const answerFrom = async (sr: { candidates: SearchCandidate[]; total: number | null }, variant: string): Promise<AdapterResult | null> => {
+    const scored = scoreAll(sr.candidates);
     if (sr.total && sr.total > sr.candidates.length) {
       ctx.warnings.push(`${adapter.name} reported ${sr.total} matches for "${variant}"; only the first ${sr.candidates.length} were compared. Use the identifier for certainty.`);
     }
@@ -657,6 +673,57 @@ async function verifyWithAdapter(adapter: RegistryAdapter, ctx: Ctx): Promise<Ad
       };
     }
     if (d.nearMisses.length > nearMisses.length) nearMisses = d.nearMisses;
+    return null;
+  };
+
+  for (const variant of variants) {
+    // "Publix Super Markets, Inc." and "Publix Super Markets" sort to the same
+    // place, so the list is read once. A failed read does not count.
+    const key = browseKey?.(variant);
+    if (key !== undefined && searchedKeys.has(key)) continue;
+    tried.push(variant);
+    const sr = await searchCandidates(adapter, ctx, variant);
+    if (sr.kind !== "unavailable" && key !== undefined) searchedKeys.add(key);
+    if (sr.kind === "unavailable") {
+      unread.push({ variant, reason: sr.reason });
+      // A live run (12 Nov 2026) spent 10 minutes on two Agent timeouts at a
+      // discovered page that was not a search at all. For a registry found by
+      // Search, a failed run says the page is unusable, so other name forms
+      // are not tried. Curated registries keep trying: the same run's Sunbiz
+      // search timed out once and then worked for the next name form.
+      if (adapter.curated === false) break;
+      continue;
+    }
+    answered = true;
+    if (sr.kind === "no_results") continue;
+    if (sr.kind === "browse_miss") {
+      browseMiss = true;
+      const d = decide(scoreAll(sr.candidates));
+      if (d.kind === "none" && d.nearMisses.length > nearMisses.length) nearMisses = d.nearMisses;
+      continue;
+    }
+    const res = await answerFrom(sr, variant);
+    if (res) return res;
+  }
+
+  if (browseMiss && unread.length === 0 && adapter.search.mode === "fetch") {
+    // The sort key is inferred, so a list without the name is checked once
+    // with the registry's own search form before "no match" is reported.
+    const spec = adapter.search;
+    const first = variants[0] ?? req.name;
+    const sr = await agentSearch(adapter, ctx, first, spec.agentFallbackUrl, spec.agentInstructions(first, ctx.kind));
+    if (sr.kind === "unavailable") {
+      return {
+        outcome: "source_unavailable",
+        records: [],
+        candidates: nearMisses.map((s) => toCandidate(adapter.id, s)),
+        message: `The ${adapter.name} name list near "${req.name}" has no close name, but the TinyFish Agent search that confirms it could not be read (${sr.reason}). TinyVerify does not report no_match from the list alone.`,
+      };
+    }
+    if (sr.kind === "results") {
+      const res = await answerFrom(sr, first);
+      if (res) return res;
+    }
   }
 
   if (!answered) {
@@ -675,7 +742,7 @@ async function verifyWithAdapter(adapter: RegistryAdapter, ctx: Ctx): Promise<Ad
       outcome: "source_unavailable",
       records: [],
       candidates: nearMisses.map((s) => toCandidate(adapter.id, s)),
-      message: `No match for ${variants.filter((v) => !unread.some((u) => u.variant === v)).map((v) => `"${v}"`).join(", ")} on ${adapter.name}, but the search for ${unread
+      message: `No match for ${tried.filter((v) => !unread.some((u) => u.variant === v)).map((v) => `"${v}"`).join(", ")} on ${adapter.name}, but the search for ${unread
         .map((u) => `"${u.variant}"`)
         .join(", ")} could not be read (${unread[0]?.reason ?? "unknown error"}). TinyVerify does not report no_match until every name form has been checked.`,
     };
@@ -684,7 +751,7 @@ async function verifyWithAdapter(adapter: RegistryAdapter, ctx: Ctx): Promise<Ad
     outcome: "no_match",
     records: [],
     candidates: nearMisses.map((s) => toCandidate(adapter.id, s)),
-    message: `No record on ${adapter.name} matches "${req.name}" (tried: ${variants.map((v) => `"${v}"`).join(", ")}).${
+    message: `No record on ${adapter.name} matches "${req.name}" (tried: ${tried.map((v) => `"${v}"`).join(", ")}).${
       nearMisses.length ? " Similar names are listed in candidates for review; none is close enough to report as a match." : ""
     }${notes}`,
   };
@@ -742,7 +809,13 @@ async function verifyWithDiscovery(ctx: Ctx, rt: Route, place: string = ctx.req.
     check(ctx, pseudo, { step: "discover", method: "tinyfish_search", url: null, query, outcome: "error", result_count: null, detail: err instanceof Error ? err.message : String(err) });
     return { adapter: null, outcome: "source_unavailable", records: [], candidates: [], message: "Registry discovery search failed." };
   }
-  const { chosen, rejected, skippedOfficial = [] } = pickOfficial(hits, rt.recordType === "business_registration" ? "business" : "licence");
+  const { chosen, rejected, skippedOfficial = [], skippedPages = [] } = pickOfficial(hits, rt.recordType === "business_registration" ? "business" : "licence");
+  // Name the pages that were skipped, so a reader can see why no Agent run
+  // started (a live run only said "ca.gov" for the California side).
+  const skippedList = skippedPages
+    .slice(0, 3)
+    .map((p) => `"${truncate(p.title, 60)}" ${p.url}`)
+    .join("; ");
   check(ctx, pseudo, {
     step: "discover",
     method: "tinyfish_search",
@@ -753,7 +826,7 @@ async function verifyWithDiscovery(ctx: Ctx, rt: Route, place: string = ctx.req.
     detail: chosen
       ? `chose official host ${chosen.host}`
       : skippedOfficial.length
-        ? `official pages found but none looked like a register search: ${[...new Set(skippedOfficial)].slice(0, 6).join(", ")}`
+        ? `official pages found but none looked like a register search: ${skippedList}${skippedPages.length > 3 ? ` (and ${skippedPages.length - 3} more)` : ""}`
         : `no official host among: ${[...new Set(rejected)].slice(0, 6).join(", ") || "no results"}`,
   });
   if (!chosen) {
@@ -843,8 +916,19 @@ export async function verify(input: unknown, deps: PipelineDeps): Promise<Verify
           warnings.push(`${jurisdictionLabel(key)} was not checked: no curated registry for this record type there, and discovery is off.`);
           continue;
         }
-        const d = await verifyWithDiscovery(baseCtx(null), rt, jurisdictionLabel(key).replace(/\s*\(.*?\)/, ""));
+        const place = jurisdictionLabel(key).replace(/\s*\(.*?\)/, "");
+        const d = await verifyWithDiscovery(baseCtx(null), rt, place);
         results.push({ adapter: d.adapter, r: d });
+        // The overall answer can still be "verified" from the other place, so
+        // say plainly that this place was not checked (live run, 12 Nov 2026:
+        // "CA" verified in Canada while California had no usable register page).
+        if (d.outcome === "unsupported" || d.outcome === "source_unavailable") {
+          warnings.push(
+            `${place} was not checked: ${
+              d.outcome === "unsupported" ? "no official register search page was found for it" : "its register could not be read"
+            }. The answer covers the other place only.`,
+          );
+        }
       }
     } else if (req.allow_discovery) {
       const d = await verifyWithDiscovery(baseCtx(null), rt);

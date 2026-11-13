@@ -158,7 +158,7 @@ export function resolveJurisdiction(input: string): ResolvedJurisdiction {
       keys: amb,
       label: input,
       ambiguous: true,
-      notes: [`"${input}" can mean ${labels.join(" or ")}. TinyVerify checked each one; set jurisdiction to the full name to check only one.`],
+      notes: [`"${input}" can mean ${labels.join(" or ")}. TinyVerify looks in each one, and a warning names any place it could not check; set jurisdiction to the full name to check only one.`],
       assumption: null,
     };
   }
