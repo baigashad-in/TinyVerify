@@ -29,3 +29,22 @@ Two fixtures copy the exact layout of real TinyFish Fetch output saved with
 `ch-search-live-layout.md` and `abr-search-live-layout.md`. Only the Tesco and
 Woolworths rows are real; every other row was replaced with an invented name,
 address and placeholder number.
+
+Four more copy the whole-page layout from a second dump the same day:
+
+* `canada-search-live-layout.md`: the Canadian National Railway Company row is
+  real (010533-3); the second row is invented, with the placeholder 000000-0.
+* `canada-record-live-layout.md`: an invented corporation on the real record
+  layout. It keeps the "Annual filings overdue" alert text that the live page
+  shows for every corporation, because the parser must ignore it. The real
+  page's director names were not copied; the one director is invented.
+* `sunbiz-search-live-layout.md`: the PUBLIX SUPER MARKETS, INC. row is real
+  (112252); the other rows are invented, with 2026 document numbers in the
+  99999xxx range and a trademark row (T99999) that the parser must skip.
+* `sunbiz-record-live-layout.md`: an invented company on the real record
+  layout, where labels are glued to values ("StatusINACTIVE"). The real page's
+  officer names were not copied; the agent and officer are invented.
+
+Live pages draw horizontal rules and table separators with three hyphens.
+These fixtures write them as `- - -` and `:--`, which Markdown and the
+parsers treat the same way.

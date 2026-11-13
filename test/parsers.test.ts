@@ -141,15 +141,16 @@ describe("CSLB", () => {
 });
 
 describe("Corporations Canada", () => {
-  it("parses status and compliance alerts", () => {
+  it("parses status; alert wording alone is not a flag", () => {
     const r = ok(parseCanadaRecord(page(corporationsCanada.recordUrl("0000000") as string, "canada-alerts.md")));
     assert.equal(r.name, "Northwind Example Friendship Association");
     assert.equal(r.identifier, "0000000");
     assert.equal(r.identifiers.corporation_number, "000000-0");
     assert.equal(r.identifiers.business_number, "000000000RC0001");
     assert.equal(r.status, "active");
-    const codes = r.compliance_flags.map((f) => f.code).sort();
-    assert.deepEqual(codes, ["annual_filings_overdue", "notice_of_intent_to_dissolve"]);
+    // Every live record page carries the "Annual filings overdue" alert text,
+    // compliant or not (see live-run-3.test.ts), so it is not evidence.
+    assert.deepEqual(r.compliance_flags, []);
   });
 });
 

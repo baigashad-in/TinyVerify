@@ -180,7 +180,7 @@ describe("parsers", () => {
     assert.ok(r.ok);
     if (!r.ok) return;
     assert.equal(r.record.status, "active");
-    assert.ok(r.record.compliance_flags.some((f) => f.code === "dissolution_pending"));
+    assert.ok(r.record.compliance_flags.some((f) => f.code === "intent_to_dissolve_filed"));
   });
 
   it("GMC: a plain 'Fitness to practise' heading is found, and dates stay on their own row", () => {
