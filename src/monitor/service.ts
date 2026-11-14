@@ -1,7 +1,7 @@
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { TracedGateway, toMonitorPayload, type Gateway, type MonitorRunPayload } from "../tinyfish/gateway.js";
 import { looksBlocked, type ParsedRecord, type RegistryAdapter } from "../registries/types.js";
-import type { TinyFishCall, VerifiedRecord, VerifyResult } from "../types.js";
+import type { RetrievedVia, TinyFishCall, VerifiedRecord, VerifyResult } from "../types.js";
 import { sha256, stableHash, truncate } from "../util/text.js";
 import { adapterForRecord, readRecord, verify } from "../verify/pipeline.js";
 import { diffRecords, type ChangeEvent } from "./diff.js";
@@ -62,7 +62,7 @@ function safeEqual(a: string, b: string): boolean {
 }
 
 /** Rebuild a record from a fresh parse, keeping identity fields from the previous record. */
-function refreshRecord(prev: VerifiedRecord, p: ParsedRecord, url: string, via: "tinyfish_monitor" | "tinyfish_agent", text: string | null, runId: string | null, now: Date): VerifiedRecord {
+function refreshRecord(prev: VerifiedRecord, p: ParsedRecord, url: string, via: RetrievedVia, text: string | null, runId: string | null, now: Date): VerifiedRecord {
   return {
     ...prev,
     subject: { ...prev.subject, name: p.name ?? prev.subject.name },
@@ -163,10 +163,19 @@ export class MonitorService {
       readable = p.ok && (!p.record.identifier || !rec.licence_number || adapter.normalizeIdentifier(p.record.identifier) === adapter.normalizeIdentifier(rec.licence_number));
     }
     if (!readable) {
+      // Say why, and what each check will cost. Sunbiz is the expected case:
+      // its main-content page has values without labels.
+      const blocked = basePage?.text ? looksBlocked(basePage.text) : null;
+      const knownLayout = !!adapter.recordFetchModes && !adapter.recordFetchModes.includes("default");
+      const why = blocked
+        ? `Monitor's baseline page looks like a bot check (${blocked})`
+        : knownLayout
+          ? `Monitor reads the main-content page, and ${adapter.name} only parses from the whole page`
+          : "Monitor's baseline page could not be parsed (a layout change or missing content)";
       warnings.push(
         this.opts.agentEscalation
-          ? "Monitor's baseline page could not be parsed (likely bot protection or a layout change). Each scheduled check will re-read the record with TinyFish Agent."
-          : "Monitor's baseline page could not be parsed and agent escalation is off, so scheduled checks will report the record as unreadable.",
+          ? `${why}. Each check will re-read the record: ${blocked ? "with TinyFish Agent" : "with a whole-page TinyFish Fetch first, and TinyFish Agent only if that fails"}.`
+          : `${why}, and Agent escalation is off. ${blocked ? "Checks will report the record as unreadable." : "Checks will re-read the whole page with TinyFish Fetch and report the record as unreadable if that fails."}`,
       );
     }
     if (!webhook) {
@@ -266,6 +275,9 @@ export class MonitorService {
     let parsed: ParsedRecord | null = null;
     let via: ProcessResult["read_via"] = "tinyfish_monitor";
     let agentRunId: string | null = null;
+    // The page the record was parsed from: Monitor's page, or the page an
+    // escalation fetched. Its hash goes in content_sha256.
+    let parsedText: string | null = page?.text ?? null;
     if (page?.text && adapter.curated !== false) {
       const p = adapter.parseRecord(page);
       if (p.ok) parsed = p.record;
@@ -302,6 +314,7 @@ export class MonitorService {
         parsed = r.parsed;
         via = r.via === "tinyfish_agent" ? "tinyfish_monitor+agent" : "tinyfish_monitor+fetch";
         agentRunId = r.runId;
+        parsedText = r.page?.text ?? null;
       }
     }
 
@@ -351,15 +364,13 @@ export class MonitorService {
       return { watch_id: watch.id, ignored: null, events, record: null, read_via: via, tinyfish_calls: gw.calls };
     }
 
-    const next = refreshRecord(
-      watch.latest,
-      parsed,
-      watch.record_url,
-      via === "tinyfish_monitor" ? "tinyfish_monitor" : "tinyfish_agent",
-      page?.text ?? null,
-      agentRunId,
-      now,
-    );
+    // Up to v8 a whole-page Fetch escalation was labelled tinyfish_agent and
+    // agent_structured_output (live Monitor run, 13 Nov 2026, Sunbiz). That
+    // was wrong provenance, and it made the first check compare flags against
+    // no earlier record of the "same method".
+    const retrieved: RetrievedVia =
+      via === "tinyfish_monitor+agent" ? "tinyfish_agent" : via === "tinyfish_monitor+fetch" ? "tinyfish_fetch" : "tinyfish_monitor";
+    const next = refreshRecord(watch.latest, parsed, watch.record_url, retrieved, parsedText, agentRunId, now);
     const byMethod = watch.latest_by_extraction ?? { [watch.latest.source.extraction]: watch.latest };
     const sameMethodPrev = byMethod[next.source.extraction] ?? null;
     for (const c of diffRecords(watch.latest, next, { sameMethodPrev })) events.push(mk(c, next));
