@@ -29,10 +29,16 @@ const AGGREGATOR_BLOCKLIST = [
   "vitals.com", "webmd.com", "npiprofile.com", "npidb.org", "apify.com", "linkedin.com", "facebook.com", "wikipedia.org",
 ];
 
-export function isOfficialHost(host: string | null): boolean {
+/**
+ * True for a government or statutory-regulator host. `extra` adds hosts known
+ * to be official from another source: the websites in GLEIF's Registration
+ * Authorities List (for example a chamber of commerce that runs the register).
+ */
+export function isOfficialHost(host: string | null, extra: string[] = []): boolean {
   if (!host) return false;
   const h = host.toLowerCase().replace(/^www\./, "");
   if (AGGREGATOR_BLOCKLIST.some((d) => h === d || h.endsWith(`.${d}`))) return false;
+  if (extra.some((d) => h === d || h.endsWith(`.${d}`))) return true;
   if (REGULATOR_ALLOWLIST.some((d) => h === d || h.endsWith(`.${d}`))) return true;
   if (GOV_SUFFIXES.some((s) => h.endsWith(s) || h === s.slice(1))) return true;
   return US_STATE_HOST.test(h);
@@ -81,7 +87,7 @@ export interface DiscoveredRegistry {
 }
 
 /** Signs that an official page is a register search rather than a form, letter or tax service. */
-const GOOD_SIGNS: Record<"business" | "licence", RegExp> = {
+export const GOOD_SIGNS: Record<"business" | "licence", RegExp> = {
   business:
     /\b(sos|dos|secretary of state|department of state|division of corporations|public inquiry|bizfile|business (entity |name )?search|entity search|corporations?( division)?|company search|business search|registry|register search)\b/i,
   licence: /\b(licen[cs]e (lookup|search|verification)|look ?up a licen[cs]e|verify a licen[cs]e|verification|lookup|registry|register)\b/i,
@@ -92,9 +98,9 @@ const GOOD_SIGNS: Record<"business" | "licence", RegExp> = {
  * (ca.gov/departments/275) and spent two 5-minute Agent timeouts on it: the
  * agency name matched, but the page is a directory card, not a search.
  */
-const SEARCH_ACTION = /\b(search|look ?up|inquiry|bizfile|find)\b/i;
+export const SEARCH_ACTION = /\b(search|look ?up|inquiry|bizfile|find|zoeken|suche|recherche|buscar|busqueda|ricerca|consulta|pesquisa|sok|haku|soeg)\b/i;
 /** Pages about a topic (how to register, guides, tax letters, directories) rather than the register itself. */
-const BAD_SIGNS =
+export const BAD_SIGNS =
   /\b(tax|franchise tax|e-?letter|status letter|forms?|pdf|faq|news|press release|jobs?|careers?|information|how to|guide|learn|steps|start(ing)? a business|register (a|your) business|departments|agenc(y|ies)|about( us)?|contact( us)?|directory)\b/i;
 
 /**
@@ -137,17 +143,22 @@ export function pickOfficial(
   return { chosen: { host: best.host, url: best.h.url, title: best.h.title, snippet: best.h.snippet }, rejected };
 }
 
-/** Keyword mapping used for registries without a curated parser. */
+/**
+ * Keyword mapping used for registries without a curated parser. Registers
+ * outside English-speaking countries show their own words, so common status
+ * words in other languages are included (the raw wording is always kept next
+ * to the normalized value).
+ */
 export function genericNormalizeStatus(raw: string): NormalizedStatus {
-  const s = raw.toLowerCase();
-  if (/revok|erased|erasure/.test(s)) return "revoked";
-  if (/suspend/.test(s)) return "suspended";
-  if (/expir|lapsed/.test(s)) return "expired";
-  if (/dissolv|struck off/.test(s)) return "dissolved";
+  const s = raw.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  if (/revok|erased|erasure|widerruf|revoque/.test(s)) return "revoked";
+  if (/suspend|sospes|geschorst/.test(s)) return "suspended";
+  if (/expir|lapsed|abgelaufen/.test(s)) return "expired";
+  if (/dissolv|struck off|deregistered|removed from the register|geloscht|aufgelost|erloschen|radi[ee]|dissout|disuelt|extinguid|cancelad[ao]|opgeheven|ontbonden|uitgeschreven|cessat|cancellat|estint|wykreslon|avregistrer|lopetettu|ophaevet|afmeldt/.test(s)) return "dissolved";
   if (/cancel|surrender|retired|withdrawn/.test(s)) return "cancelled";
-  if (/liquidation|receivership|administration|bankrupt/.test(s)) return "insolvency";
-  if (/not registered|no record/.test(s)) return "not_registered";
-  if (/inactive|delinquent|not in good standing|forfeit/.test(s)) return "inactive";
-  if (/\b(active|current|clear|in good standing|good standing|valid|registered|licensed)\b/.test(s)) return "active";
+  if (/liquidation|liquidacion|liquidazione|liquidatie|receivership|administration|bankrupt|insolven|konkurs|faillite|redressement|faillissement|concurso|fallimento|falencia|recuperacao judicial|upadlosc|likvidac|selvitystila/.test(s)) return "insolvency";
+  if (/not registered|no record|nicht eingetragen|non inscrit/.test(s)) return "not_registered";
+  if (/inactive|inaktiv|inactif|inactiv|dormant|delinquent|not in good standing|forfeit|ruhend|sospensione/.test(s)) return "inactive";
+  if (/\b(active|activa|activo|actif|active|aktiv|attiva|ativa|attivo|ativo|current|clear|in good standing|good standing|valid|registered|licensed|live|existing|subsisting|ingeschreven|eingetragen|inscrit|inscrita|registrad[ao]|iscritta|normal|in operation|in business)\b/.test(s)) return "active";
   return "unknown";
 }

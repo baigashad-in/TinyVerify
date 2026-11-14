@@ -27,14 +27,22 @@ import {
 } from "../types.js";
 import { toIsoDate, type DateOrder } from "../util/dates.js";
 import { decide, identifierNameCheck, MATCH_THRESHOLDS, nameScore, nameVariants, requestCoverage, type Scored } from "../util/match.js";
-import { hostOf, isOnDomains, sha256, truncate } from "../util/text.js";
+import { baseDomain, hostOf, isOnDomains, sha256, truncate } from "../util/text.js";
+import type { Gleif } from "../gleif/client.js";
+import { resolvePlace } from "../registries/places.js";
+import { verifyWorldwide, type WorldAdapterOptions } from "./worldwide.js";
 
 export interface PipelineDeps {
   gateway: Gateway;
   now?: () => Date;
+  /**
+   * GLEIF client for companies in places without a built-in register. When
+   * absent, those places use TinyFish Search discovery only (the v11 path).
+   */
+  gleif?: Gleif | null;
 }
 
-interface Ctx {
+export interface Ctx {
   gw: TracedGateway;
   req: VerifyRequest;
   kind: EntityKind | null;
@@ -44,7 +52,7 @@ interface Ctx {
   now: () => Date;
 }
 
-interface AdapterResult {
+export interface AdapterResult {
   outcome: Outcome;
   records: VerifiedRecord[];
   candidates: Candidate[];
@@ -155,7 +163,8 @@ export function agentRecordToParsed(
     // Without the number on the page there is no proof this is the requested record.
     return { ok: false, reason: `agent did not report the record number (expected ${opts.expectId})` };
   }
-  if (opts.expectId && identifier && opts.normalizeId(identifier) !== opts.expectId) {
+  const compact = (v: string | null) => (v ?? "").replace(/[\s.\-/]/g, "");
+  if (opts.expectId && identifier && compact(opts.normalizeId(identifier)) !== compact(opts.expectId)) {
     return { ok: false, reason: `agent opened a different record (${identifier}, expected ${opts.expectId})` };
   }
   const rawActions = objects(result.disciplinary_actions);
@@ -764,33 +773,42 @@ export function adapterForRecord(rec: VerifiedRecord): RegistryAdapter | null {
   return discoveredAdapter(host, rec.source.url, rec.registry.name, rec.registry.country);
 }
 
-export function discoveredAdapter(host: string, startUrl: string, title: string, jurisdiction: string): RegistryAdapter {
-  const parts = host.split(".");
-  const domains = [host];
-  if (parts.length >= 4) domains.push(parts.slice(1).join("."));
+export function discoveredAdapter(host: string, startUrl: string, title: string, jurisdiction: string, opts: WorldAdapterOptions = {}): RegistryAdapter {
+  const domains = [...new Set([host, baseDomain(host), ...(opts.officialDomains ?? [])])];
+  // Some registers only answer visitors from their own country, so the Agent's
+  // browser uses a proxy there when the country is known (an ISO code).
+  const proxyCountry = opts.proxyCountry ?? (/^[A-Z]{2}$/.test(jurisdiction) ? jurisdiction : "US");
   return {
     id: `discovered:${host}`,
     name: title || host,
-    authority: host,
+    authority: opts.authority ?? host,
     country: jurisdiction,
     region: null,
     jurisdictions: [],
     recordTypes: [],
     entityKinds: ["business", "person"],
     officialDomains: domains,
-    identifierLabel: "licence or registration number",
+    identifierLabel: opts.identifierLabel ?? "licence or registration number",
     identifierExample: "as shown by the registry",
     dateOrder: usesMonthFirstDates(host, jurisdiction) ? "MDY" : "DMY",
     notes: [],
-    agent: { stealth: true, proxyCountry: "US" },
+    agent: { stealth: true, proxyCountry },
     curated: false,
+    ...(opts.agentInstructions ? { agentRecordInstructions: opts.agentInstructions } : {}),
+    // Spaces are kept ("HRB 999001"): the Agent types the number as given, and
+    // some registers need the space. Numbers are compared without them.
     normalizeIdentifier: (raw) => {
-      const s = raw.trim().toUpperCase().replace(/\s+/g, "");
-      return /^[A-Z0-9][A-Z0-9.\-/]{0,29}$/.test(s) ? s : null;
+      const s = raw.trim().toUpperCase().replace(/\s+/g, " ");
+      return /^[A-Z0-9][A-Z0-9 .\-/]{0,39}$/.test(s) ? s : null;
     },
     recordUrl: () => null,
     identifierSearchUrl: startUrl,
-    search: { mode: "agent", url: startUrl, agentInstructions: () => "Use this site's licence or registry lookup form. If this page is not the lookup form, follow the link to it on the same site." },
+    search: {
+      mode: "agent",
+      url: startUrl,
+      agentInstructions: () =>
+        opts.agentInstructions ?? "Use this site's licence or registry lookup form. If this page is not the lookup form, follow the link to it on the same site.",
+    },
     parseRecord: () => ({ ok: false, reason: "no curated parser for a discovered registry" }),
     normalizeStatus: genericNormalizeStatus,
     monitorPurpose: (r) =>
@@ -861,8 +879,15 @@ function baseResult(req: Record<string, unknown>, now: Date): Omit<VerifyResult,
     sources_checked: [],
     warnings: [],
     tinyfish_calls: [],
+    lei_records: [],
     checked_at: now.toISOString(),
   };
+}
+
+/** Company record types (curated or free text such as "trade register entry"). */
+function isCompanyRequest(rt: Route, recordType: string): boolean {
+  if (rt.recordType === "business_registration") return true;
+  return rt.recordType === null && /regist|compan|corporat|business|firm|entity|trade|commercial|enterprise|incorporat/i.test(recordType);
 }
 
 /**
@@ -889,6 +914,29 @@ export async function verify(input: unknown, deps: PipelineDeps): Promise<Verify
   if (rt.jurisdiction.assumption) warnings.push(rt.jurisdiction.assumption);
 
   const results: { adapter: RegistryAdapter | null; r: AdapterResult }[] = [];
+  const leiRecords: VerifyResult["lei_records"] = [];
+  const gleif = deps.gleif ? (deps.gleif.forRequest?.() ?? deps.gleif) : null;
+  /**
+   * A place without a built-in register. Companies go through the GLEIF path
+   * when a GLEIF client is configured; everything else uses TinyFish Search.
+   */
+  const discover = async (place: string, isoKey?: string) => {
+    const ctx = baseCtx(null);
+    const p = gleif && isCompanyRequest(rt, req.record_type) ? resolvePlace(isoKey ?? place) : null;
+    if (gleif && p) {
+      const w = await verifyWorldwide(ctx, p, gleif, {
+        verifyWithAdapter,
+        discoveredAdapter,
+        searchDiscovery: (c, pl) => verifyWithDiscovery(c, rt, pl),
+      });
+      leiRecords.push(...w.lei);
+      return w;
+    }
+    if (gleif && !p && isCompanyRequest(rt, req.record_type)) {
+      warnings.push(`"${place}" was not recognised as a country or state, so the GLEIF register list could not be used; TinyFish Search was used instead.`);
+    }
+    return verifyWithDiscovery(ctx, rt, place);
+  };
   const baseCtx = (adapter: RegistryAdapter | null): Ctx => ({
     gw,
     req,
@@ -917,7 +965,7 @@ export async function verify(input: unknown, deps: PipelineDeps): Promise<Verify
           continue;
         }
         const place = jurisdictionLabel(key).replace(/\s*\(.*?\)/, "");
-        const d = await verifyWithDiscovery(baseCtx(null), rt, place);
+        const d = await discover(place, /^[A-Z]{2}(-[A-Z0-9]{1,3})?$/.test(key) ? key : undefined);
         results.push({ adapter: d.adapter, r: d });
         // The overall answer can still be "verified" from the other place, so
         // say plainly that this place was not checked (live run, 12 Nov 2026:
@@ -931,7 +979,7 @@ export async function verify(input: unknown, deps: PipelineDeps): Promise<Verify
         }
       }
     } else if (req.allow_discovery) {
-      const d = await verifyWithDiscovery(baseCtx(null), rt);
+      const d = await discover(req.jurisdiction);
       results.push({ adapter: d.adapter, r: d });
     } else {
       results.push({
@@ -976,5 +1024,6 @@ export async function verify(input: unknown, deps: PipelineDeps): Promise<Verify
     sources_checked: checks,
     warnings,
     tinyfish_calls: gw.calls,
+    lei_records: leiRecords,
   };
 }

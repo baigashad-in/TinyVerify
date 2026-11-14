@@ -96,7 +96,7 @@ export const RECORD_SCHEMA = {
 
 const COMMON_RULES = [
   "Copy every value exactly as the page displays it. Do not infer, translate, reformat or fill gaps.",
-  "Only use this official register. Do not visit other websites.",
+  "Only use this official register and its own search pages. Do not visit other websites.",
   "Do not log in, create accounts, pay, or submit any form other than the register's own public search.",
   "If you see a CAPTCHA, an access-denied page, a maintenance notice or an error page, stop and set page_state to 'blocked' (or 'error').",
 ];

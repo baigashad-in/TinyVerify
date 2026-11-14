@@ -168,8 +168,9 @@ export type Candidate = z.infer<typeof CandidateSchema>;
 export const SourceCheckSchema = z.object({
   registry_id: z.string(),
   registry_name: z.string(),
-  step: z.enum(["discover", "search", "record"]),
-  method: z.enum(["tinyfish_fetch", "tinyfish_agent", "tinyfish_search"]),
+  /** "lei": a GLEIF lookup (the LEI register or its list of national registers). */
+  step: z.enum(["discover", "lei", "search", "record"]),
+  method: z.enum(["tinyfish_fetch", "tinyfish_agent", "tinyfish_search", "gleif_api"]),
   url: z.string().nullable(),
   query: z.string().nullable(),
   outcome: z.enum(["ok", "no_results", "unparsed", "blocked", "not_found", "error"]),
@@ -201,6 +202,37 @@ export const OutcomeSchema = z.enum([
 ]);
 export type Outcome = z.infer<typeof OutcomeSchema>;
 
+/**
+ * An entry from the global LEI register (GLEIF). Shown for reference only:
+ * it is not the national register, so it never makes an answer "verified".
+ */
+export const LeiRecordSchema = z.object({
+  lei: z.string(),
+  legal_name: z.string(),
+  other_names: z.array(z.string()),
+  jurisdiction: z.string().nullable(),
+  country: z.string().nullable(),
+  city: z.string().nullable(),
+  category: z.string().nullable(),
+  /** ACTIVE or INACTIVE, as reported to GLEIF. */
+  entity_status: z.string().nullable(),
+  /** ISSUED (checked in the last year), LAPSED (not renewed), RETIRED, MERGED, ... */
+  registration_status: z.string().nullable(),
+  /** RA code of the national register the LEI record names. */
+  registered_at: z.string().nullable(),
+  register_name: z.string().nullable(),
+  register_website: z.string().nullable(),
+  /** The entity's number in that national register. */
+  registered_as: z.string().nullable(),
+  last_update: z.string().nullable(),
+  next_renewal: z.string().nullable(),
+  source_url: z.string(),
+  match_score: z.number(),
+  counts_as_verified: z.literal(false),
+  note: z.string(),
+});
+export type LeiRecord = z.infer<typeof LeiRecordSchema>;
+
 export const VerifyResultSchema = z.object({
   schema_version: z.literal(SCHEMA_VERSION),
   outcome: OutcomeSchema,
@@ -211,6 +243,8 @@ export const VerifyResultSchema = z.object({
   sources_checked: z.array(SourceCheckSchema),
   warnings: z.array(z.string()),
   tinyfish_calls: z.array(TinyFishCallSchema),
+  /** Matches on the global LEI register, for reference (never "verified" on their own). */
+  lei_records: z.array(LeiRecordSchema),
   checked_at: z.string(),
 });
 export type VerifyResult = z.infer<typeof VerifyResultSchema>;

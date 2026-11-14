@@ -108,3 +108,53 @@ export class FakeGateway implements Gateway {
 }
 
 export const FIXED_NOW = () => new Date("2026-11-04T10:00:00.000Z");
+
+// GLEIF
+import type { Gleif, GleifCall, LeiEntity, RegistrationAuthority } from "../src/gleif/client.js";
+import { nameScore } from "../src/util/match.js";
+
+export function lei(partial: Partial<LeiEntity> & Pick<LeiEntity, "lei" | "legal_name">): LeiEntity {
+  return {
+    other_names: [],
+    jurisdiction: null,
+    country: null,
+    city: null,
+    legal_form: null,
+    category: "GENERAL",
+    entity_status: "ACTIVE",
+    registration_status: "ISSUED",
+    registered_at: null,
+    registered_as: null,
+    initial_registration: null,
+    last_update: "2026-10-01T00:00:00Z",
+    next_renewal: "2027-10-01T00:00:00Z",
+    ...partial,
+  };
+}
+
+/** In-memory stand-in for the GLEIF API. Entities, registers and samples are invented. */
+export class FakeGleif implements Gleif {
+  calls: GleifCall[] = [];
+  entities: LeiEntity[] = [];
+  registers: RegistrationAuthority[] = [];
+  samples = new Map<string, LeiEntity[]>();
+  failWith: string | null = null;
+  private log(url: string, count: number | null) {
+    this.calls.push({ url, ok: !this.failWith, ms: 1, count, error: this.failWith });
+    if (this.failWith) throw new Error(`GLEIF API: ${this.failWith}`);
+  }
+  async searchByName(name: string, _accept?: (e: LeiEntity) => boolean) {
+    const hits = this.entities.filter((e) => [e.legal_name, ...e.other_names].some((n) => nameScore(name, n, "business") >= 0.8));
+    this.log(`https://api.gleif.org/api/v1/lei-records?filter[fulltext]=${encodeURIComponent(name)}`, hits.length);
+    return { entities: hits, method: hits.length ? ("fulltext" as const) : ("none" as const) };
+  }
+  async sampleJurisdiction(code: string) {
+    const s = this.samples.get(code) ?? [];
+    this.log(`https://api.gleif.org/api/v1/lei-records?filter[entity.jurisdiction]=${code}`, s.length);
+    return s;
+  }
+  async authorities() {
+    if (this.failWith) throw new Error(`GLEIF API: ${this.failWith}`);
+    return this.registers;
+  }
+}

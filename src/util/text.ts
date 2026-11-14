@@ -201,3 +201,15 @@ export function absoluteUrl(href: string, base: string): string | null {
     return null;
   }
 }
+
+/** Second-level labels under which a site's own domain has three parts (kvk.nl has two; companies.govt.nz has three). */
+const SLD = new Set(["co", "com", "gov", "go", "or", "ac", "net", "org", "gob", "gouv", "govt", "nic", "gv", "admin", "jus", "bund"]);
+
+/** The site's own domain: "www.kvk.nl" becomes "kvk.nl"; US state hosts keep the agency ("apps.dos.ny.gov" becomes "dos.ny.gov"). */
+export function baseDomain(host: string): string {
+  const h = host.toLowerCase().replace(/^www\./, "");
+  const parts = h.split(".");
+  if (parts.length <= 2) return h;
+  if (parts[parts.length - 1] === "gov") return parts.slice(-3).join(".");
+  return SLD.has(parts[parts.length - 2] as string) ? parts.slice(-3).join(".") : parts.slice(-2).join(".");
+}

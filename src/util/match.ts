@@ -29,6 +29,26 @@ const SUFFIX_CANON: Record<string, string> = {
   sas: "sas",
   bv: "bv",
   nv: "nv",
+  // Other legal forms, so "Siemens Aktiengesellschaft" equals "Siemens AG".
+  aktiengesellschaft: "ag",
+  se: "se",
+  kgaa: "kgaa",
+  spa: "spa",
+  srl: "srl",
+  sarl: "sarl",
+  sl: "sl",
+  ltda: "ltda",
+  oy: "oy",
+  oyj: "oyj",
+  ab: "ab",
+  asa: "asa",
+  aps: "aps",
+  kk: "kk",
+  bhd: "bhd",
+  sdn: "sdn",
+  pte: "pte",
+  pvt: "pvt",
+  tbk: "tbk",
   holdings: "holdings",
   group: "group",
 };
@@ -37,7 +57,32 @@ const SUFFIX_CANON: Record<string, string> = {
 const BUSINESS_NOISE = new Set([
   "limited", "plc", "llp", "lp", "llc", "incorporated", "corporation", "company", "proprietary",
   "pllc", "pc", "pa", "limitee", "ulc", "cic", "gmbh", "ag", "sa", "sas", "bv", "nv", "the",
+  "se", "kgaa", "spa", "srl", "sarl", "sl", "ltda", "oy", "oyj", "ab", "asa", "aps", "kk", "bhd", "sdn", "pte", "pvt", "tbk",
 ]);
+
+/** Spelled-out legal forms, replaced by their short form before comparing. */
+const LONG_FORMS: [RegExp, string][] = [
+  [/\bgesellschaft mit beschrankter haftung\b/g, "gmbh"],
+  [/\bkommanditgesellschaft auf aktien\b/g, "kgaa"],
+  [/\bsociete anonyme\b/g, "sa"],
+  [/\bsociedad anonima\b/g, "sa"],
+  [/\bsocieta per azioni\b/g, "spa"],
+  [/\bsociedade anonima\b/g, "sa"],
+  [/\bnaamloze vennootschap\b/g, "nv"],
+  [/\bbesloten vennootschap\b/g, "bv"],
+  [/\bkabushiki kaisha\b/g, "kk"],
+  [/\bpublic limited company\b/g, "plc"],
+  [/\bsociedad limitada\b/g, "sl"],
+  [/\bsocietas europaea\b/g, "se"],
+  [/\bsendirian berhad\b/g, "sdn bhd"],
+  [/\bprivate limited\b/g, "pvt limited"],
+  [/\b(s a)\b(?= |$)/g, "sa"],
+  [/\b(s p a)\b(?= |$)/g, "spa"],
+  [/\b(s r l)\b(?= |$)/g, "srl"],
+  [/\b(n v)\b(?= |$)/g, "nv"],
+  [/\b(b v)\b(?= |$)/g, "bv"],
+  [/\b(a g)\b(?= |$)/g, "ag"],
+];
 
 const PERSON_NOISE = new Set([
   "dr", "doctor", "mr", "mrs", "ms", "miss", "mx", "prof", "professor", "sir", "dame", "md", "mbbs",
@@ -46,16 +91,21 @@ const PERSON_NOISE = new Set([
 
 /** Lowercase, strip accents and punctuation, unify "&" and "and". */
 export function baseNormalize(s: string): string {
-  return s
+  let out = s
     .normalize("NFKD")
     .replace(/[̀-ͯ]/g, "")
     .toLowerCase()
+    .replace(/ß/g, "ss")
     .replace(/&/g, " and ")
     .replace(/['’`]/g, "")
     .replace(/\bl\.l\.c\b\.?/g, "llc")
-    .replace(/[^a-z0-9]+/g, " ")
+    // Letters and digits of every script are kept, so names in Japanese,
+    // Greek or Arabic still compare (they used to become empty).
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
     .replace(/\s+/g, " ")
     .trim();
+  for (const [re, short] of LONG_FORMS) out = out.replace(re, short);
+  return out;
 }
 
 /** Tokens with legal suffixes made uniform (kept). Used for literal comparison. */
@@ -134,7 +184,10 @@ export function nameScore(query: string, candidate: string, kind: EntityKind | n
 }
 
 /** Legal-form words that name a different kind of entity when they differ. */
-const LEGAL_FORMS = new Set(["limited", "plc", "llp", "lp", "llc", "incorporated", "corporation", "proprietary", "pllc", "pc", "pa", "limitee", "ulc", "cic", "gmbh", "ag", "sa", "sas", "bv", "nv"]);
+const LEGAL_FORMS = new Set([
+  "limited", "plc", "llp", "lp", "llc", "incorporated", "corporation", "proprietary", "pllc", "pc", "pa", "limitee", "ulc", "cic",
+  "gmbh", "ag", "sa", "sas", "bv", "nv", "se", "kgaa", "spa", "srl", "sarl", "sl", "ltda", "oy", "oyj", "ab", "asa", "aps", "kk", "bhd", "pte", "pvt", "tbk",
+]);
 
 /** True when both names carry a legal form and the forms differ ("PLC" vs "Limited"). */
 export function legalFormConflict(a: string, b: string): boolean {
