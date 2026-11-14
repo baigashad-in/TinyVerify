@@ -119,12 +119,36 @@ Two bugs showed in the Publix files, both fixed in v9:
 1. The rechecked record said `retrieved_via: tinyfish_agent` and `extraction: agent_structured_output`, although no Agent ran (the call log shows only the Monitor run and a whole-page Fetch). The code labelled every escalated read as an Agent read. This also had a real cost: flags are compared only with the last read made the same way, so on the first escalated check a new compliance flag would not have been reported. A v9 test shows v8 reporting only `status_changed` where it should also report `flag_added`. Its `content_sha256` was also the hash of Monitor's page, not of the page that was parsed.
 2. The watch warning said the baseline could not be parsed because of "likely bot protection", and that each check would use TinyFish Agent. Neither was true. It now says Monitor reads the main-content page, Sunbiz only parses from the whole page, and each check uses a whole-page Fetch first and the Agent only if that fails.
 
+## Seventh live run (14 Nov 2026, v9, with Monitor)
+
+All 9 verification outcomes were right, and all three Monitors were rechecked with no false events. The v9 fix is confirmed live: the Publix recheck record now says `retrieved_via: tinyfish_fetch` and `extraction: deterministic_parser`, and its `content_sha256` (`eaf3269b...`) is the same as the hash of the whole page read during verification, as it should be for the same page. The watch warning gives the new, correct reason.
+
+One case changed because TinyFish Search returned different results for the same query. For "CA", Search now offered `businesssearch.sos.ca.gov` ("Business Search - Business Entities - Business Programs"), which passed the checks, so one Agent run started. The Agent reported `page_state=error` after 42 s, and TinyVerify warned "California, United States was not checked: its register could not be read" while still verifying the Canadian record. The case took 48 s instead of 4 s. Why the Agent could not use that page is not known.
+
+| Case | Seconds | Read with |
+| :-- | :-- | :-- |
+| Tesco PLC by number | 3 | Fetch |
+| Rolls-Royce by name | 2 | Fetch |
+| Made-up name (no_match) | 3 | Fetch |
+| Woolworths ABN by number | 4 | Fetch |
+| Woolworths by name | 4 | Fetch |
+| Canadian National Railway by name | 6 | Fetch |
+| "CA" Canadian National Railway | 48 | Fetch, Search, one Agent run (California page failed) |
+| Publix on Sunbiz | 8 | Fetch |
+| Pfizer in New York | 252 | Search, one Agent run (`source_unavailable`) |
+
+## Web page (v11)
+
+v11 adds a web page served by the same server at http://localhost:8787. It covers the whole flow without curl: look up a record, read the answer as a register extract with an outcome stamp and the evidence lines, pick one of several matches by number, watch the record, recheck it, and stop watching. It is one HTML file with no framework, no build step and no new dependencies. Text from registries is only ever set as text, and a hashed Content-Security-Policy allows only the page's own script.
+
+How it was checked: 5 new tests (the page at `/` and `/ui`, the JSON index still served to API clients, the token rule, the CSP hashes, and that the script parses and never builds HTML from strings), and a headless Chromium run against the fake gateway and fixtures (verify with flags, several matches, no match, watch, recheck with a status change from Active to Liquidation, two-step stop, dark mode, and a 390 px phone width with no sideways scrolling). It has not yet been used against live TinyFish.
+
 ## Before you submit
 
-1. Run `npm test` (should be 135 passing).
+1. Run `npm test` (should be 140 passing). Then `npm run build; npm start`, open http://localhost:8787, and run the Tesco example and one watch and recheck from the page.
 2. Run `npm run dump` (Fetch only, inside TinyFish's free daily Fetch allowance). It prints whether each parser reads the real Fetch output, for the default and the whole-page version. If a line says a parser failed, send the matching file from `samples/raw/`.
 3. Add TinyFish credit if the wallet is empty, then run `npm run smoke` and read `samples/live-<date>/summary.json`. Each line now shows the `expected` outcome. Open each `source.url` and compare status and numbers by hand.
-4. Monitor was confirmed live on 13 Nov 2026 for Companies House, Corporations Canada and Sunbiz (see the sixth run). To repeat it after the v9 fix, run `$env:SMOKE_MONITOR = "1"; npm run smoke` in PowerShell (`SMOKE_MONITOR=1 npm run smoke` on Mac or Linux). In `monitor-fl-sunbiz-by-name-recheck.json`, `record.source.retrieved_via` should now be `tinyfish_fetch` and `extraction` should be `deterministic_parser`.
+4. Monitor was confirmed live on 13 and 14 Nov 2026 for Companies House, Corporations Canada and Sunbiz, including the v9 labels (see the sixth and seventh runs). To repeat it, run `$env:SMOKE_MONITOR = "1"; npm run smoke` in PowerShell (`SMOKE_MONITOR=1 npm run smoke` on Mac or Linux).
 5. Start the server with a public `PUBLIC_BASE_URL` (a tunnel is fine), watch one record, and wait for one scheduled run. If the server log shows "TinyFish webhook ignored", the payload shape differs from the docs; map the logged keys in `handleWebhook` (`src/monitor/service.ts`).
 6. Still not confirmed live: the Sunbiz sort-key rule for names unlike the 20 seen (a wrong key costs one Agent confirmation, not a wrong answer), whether Sunbiz detail links stay valid for months, and how GMC and CSLB pages render through Fetch. Each falls back to the Agent if wrong; check `extraction` and `calls` in the smoke output.
 7. Post on LinkedIn tagging TinyFish, and share in #showcase on the TinyFish Discord.
@@ -140,6 +164,8 @@ Two bugs showed in the Publix files, both fixed in v9:
 > Agent handles search forms and bot-protected sites, with structured output.
 > Search finds official government registries, never aggregators.
 > Monitor watches each record page, and TinyVerify turns page changes into field-level alerts like "Active to Liquidation".
+>
+> A small web page shows each answer like an extract from the register, with the exact lines it read and a link to the source.
 >
 > It never guesses: several matches or no match come back as clear answers with the candidates listed.
 >

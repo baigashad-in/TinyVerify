@@ -29,6 +29,8 @@ npm run build
 npm start                   # http://localhost:8787
 ```
 
+Open http://localhost:8787 in a browser to use the web page (see "Web page" below), or call the API:
+
 ```bash
 curl -s -X POST localhost:8787/verify \
   -H 'content-type: application/json' \
@@ -49,6 +51,18 @@ npm run cli -- verify --name "Tesco PLC" --type company --jurisdiction UK
 npm run cli -- verify --name "Woolworths Group Limited" --type abn --jurisdiction Australia --number "88 000 014 675"
 npm run cli -- registries
 ```
+
+## Web page
+
+`npm start` also serves a small web page at http://localhost:8787 (and at `/ui`). It is one HTML file, `public/index.html`, with no framework and no build step. It uses the same API as everything else:
+
+* **Look up a record.** Name, record type, place and an optional number. Example buttons fill in records from the live tests. A timer shows how long the check has run, because a register that needs the Agent can take minutes.
+* **The answer** reads like an extract from the register: an outcome stamp (Verified, No match, Several matches, Name differs, Not readable), the status, number, dates, compliance flags and disciplinary actions, the exact lines read from the page, and a link to the source. Several matches come back as a table with a "Check this number" button for each one. Pages checked, TinyFish calls and the full JSON are one click away.
+* **Watch for changes** creates a TinyFish Monitor. Under "Watched records", "Recheck now" runs it and lists any field changes, and "Stop watching" (two clicks) deletes the Monitor.
+
+The page builds everything with `textContent`, so text from a registry is never run as HTML, and links from registry data open only if they are `http` or `https`. The server sends a Content-Security-Policy that allows only the page's own inline script and style (by SHA-256 hash), Google Fonts, and calls back to the same server. If `TINYVERIFY_API_TOKEN` is set, the page still loads, and you enter the token in the "API token" box at the top. It is kept for that browser tab only (`sessionStorage`).
+
+In PowerShell: `npm run build; npm start`, then open http://localhost:8787.
 
 ## Request
 
@@ -147,12 +161,13 @@ TinyFish scheduled run -> POST /webhooks/tinyfish?token=... -> parse -> diff fie
 * **Safe webhooks.** The webhook URL carries a secret token (TinyFish does not sign payloads). Baseline runs, duplicate deliveries and unknown monitors are ignored.
 * **On demand.** `POST /watches/:id/recheck` (CLI: `npm run cli -- recheck <watch id>`) uses TinyFish Monitor "run now" and processes the result immediately. Useful for demos and when the server has no public URL. `npm run cli -- unwatch <watch id>` stops a watch and deletes its TinyFish Monitor.
 
-Monitor is in beta and enabled per TinyFish account. If your key gets a 403, ask TinyFish support to enable Monitor. Confirmed live on 13 Nov 2026 for three registries: a Monitor on a Companies House record (Tesco) and on a Corporations Canada record (Canadian National Railway) was read straight from Monitor's page, a Monitor on a Sunbiz record (Publix) was read through the whole-page Fetch step, and all three run-now rechecks correctly reported no change.
+Monitor is in beta and enabled per TinyFish account. If your key gets a 403, ask TinyFish support to enable Monitor. Confirmed live on 13 Nov 2026 for three registries: a Monitor on a Companies House record (Tesco) and on a Corporations Canada record (Canadian National Railway) was read straight from Monitor's page, a Monitor on a Sunbiz record (Publix) was read through the whole-page Fetch step, and all three run-now rechecks correctly reported no change. A repeat run on 14 Nov 2026 confirmed that the Sunbiz recheck is recorded as a Fetch parse with the same page hash as the original verification.
 
 ## API
 
 | Method and path | Purpose |
 | :-- | :-- |
+| `GET /`, `GET /ui` | The web page (browsers get it at `/`; API clients asking for JSON get the endpoint list) |
 | `POST /verify` | Verify. Body: the request above. |
 | `GET /registries` | Curated registries, what they cover, how each is read |
 | `POST /watch` | `{ "request": {...}, "schedule_cron": "...", "callback_url": "https://..." }` |
@@ -163,7 +178,7 @@ Monitor is in beta and enabled per TinyFish account. If your key gets a 403, ask
 | `POST /webhooks/tinyfish?token=` | TinyFish Monitor webhook receiver |
 | `GET /schema` | JSON Schema for request, result and change event |
 
-Set `TINYVERIFY_API_TOKEN` to require `Authorization: Bearer <token>` on every route except the webhook and `/health`. For webhooks while developing locally, expose the server with a tunnel and set `PUBLIC_BASE_URL`.
+Set `TINYVERIFY_API_TOKEN` to require `Authorization: Bearer <token>` on every route except the webhook, `/health` and the web page itself (`GET /` and `GET /ui`). The page sends the token you type into its "API token" box. For webhooks while developing locally, expose the server with a tunnel and set `PUBLIC_BASE_URL`.
 
 ## Coverage details
 
@@ -194,19 +209,22 @@ Set `TINYVERIFY_API_TOKEN` to require `Authorization: Bearer <token>` on every r
 * **ABN Lookup** name search may show active ABNs only. Search by ABN to check a cancelled one.
 * **First page only.** Only the first page of search results is compared; a warning says when the registry reports more.
 * **Discovered registries** pass an official-domain check but are not hand-verified; they carry a warning and `curated: false`. An official page is used only if its address or title looks like a register search (for US companies the query asks for the Secretary of State search). For a company register the page must also say it searches ("search", "lookup", "inquiry"). Information pages, guides, forms, tax letters and agency directory cards are skipped; if nothing qualifies the answer is `unsupported` and no Agent run is started (live runs had picked a tax-letter page, a city information page and the California portal's "Secretary of State (SOS)" directory card). If the Agent run on a discovered page fails or times out, other name forms are not tried, since the page itself is the likely problem; curated registries do try them. The discovery step in `sources_checked` lists the titles and links of skipped pages, and when an ambiguous place such as "CA" is answered from one side only, a warning names the place that was not checked.
+* **TinyFish Search results vary between runs.** The same discovery query for California returned only information pages on 12 and 13 Nov 2026 (no Agent run) and `businesssearch.sos.ca.gov` on 14 Nov 2026 (one Agent run, which failed after 42 s). The output says which pages were used or skipped either way.
 * **Fetch is usually fast, not always.** Live Fetch calls took 1 to 9 seconds, with one outlier of 123 seconds (a Companies House record, 12 Nov 2026) that still returned the page. TinyVerify waits up to 150 seconds for a Fetch call and retries once after a timeout or proxy error.
 * **TinyFish credit.** Agent runs need wallet credit. When TinyFish reports an empty wallet, TinyVerify stops the request at once and says so, instead of trying every registry and name form.
+* **The web page waits for the whole answer.** It shows a timer, not step-by-step progress, because `POST /verify` returns once at the end. If the browser tab is closed during a long Agent run, the server still finishes the check, but the page does not get the result. The page keeps no history; use "Copy JSON" to keep an answer.
 * This is a lookup tool, not legal advice.
 
 ## Privacy
 
 * No personal data is committed. Every person and small business in the test fixtures is invented, with invented addresses and numbers from ranges the registers have not issued (see `test/fixtures/README.md`). The only real entities are four large companies: Tesco PLC, Woolworths Group Limited, Canadian National Railway Company and Publix Super Markets, Inc. Officer and director names on their live pages were not copied.
 * `data/` (watched records), `samples/live-*` (live results) and `samples/raw/` (page dumps) are git-ignored. Person registers are opt-in in the smoke test.
+* The web page loads two fonts (Public Sans and IBM Plex Mono) from Google Fonts, so the browser contacts Google when the page opens. If that is blocked, the page uses system fonts and works the same. The page sends nothing else to any server but TinyVerify.
 
 ## Development
 
 ```bash
-npm test            # 135 tests: parsers, matching, routing, pipeline outcomes, Monitor diffing, webhooks, API, regressions, live-run fixes
+npm test            # 140 tests: parsers, matching, routing, pipeline outcomes, Monitor diffing, webhooks, API, web page, regressions, live-run fixes
 npm run typecheck
 npm run examples    # regenerate samples/fixture-examples from fixtures
 npm run smoke       # live checks through TinyFish (needs TINYFISH_API_KEY); SMOKE_MONITOR=1 also watches and rechecks a Companies House, a Corporations Canada and a Sunbiz record
@@ -227,6 +245,8 @@ src/
   tinyfish/gateway.ts     TinyFish SDK calls and the per-answer call log
   tinyfish/agentSchemas.ts output_schema and goals for Agent runs
   app.ts, server.ts, cli.ts
+  ui.ts                   loads the web page and builds its Content-Security-Policy
+public/index.html         the web page (inline CSS and script, no build step)
 ```
 
 ## License
