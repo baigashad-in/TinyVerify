@@ -102,12 +102,29 @@ All 9 outcomes were right. 8 of 9 cases used Fetch only, and the whole run used 
 | Publix on Sunbiz | verified, Fetch only, 12 s | yes | none |
 | Pfizer in New York | source_unavailable after one Agent run, 268 s (was two runs, 9 min) | yes, honest | the smoke expectation now says source_unavailable is the right answer when New York's search does not load |
 
+## Sixth live run (13 Nov 2026, v8, with Monitor) and what changed in v9
+
+All 9 verification outcomes were right again, and 8 of 9 used Fetch only (Tesco took 2 s this time, so the 123 s call in the fifth run was a one-off). For "CA", the output now names the two skipped California pages (a Franchise Tax Board letter page and the ca.gov directory card) and warns that California was not checked.
+
+The Monitor part watched, rechecked and deleted three Monitors:
+
+| Watch | Monitor baseline parsed? | Recheck read via | Events | Right? |
+| :-- | :-- | :-- | :-- | :-- |
+| Tesco PLC (Companies House) | yes | `tinyfish_monitor` | none | yes |
+| Canadian National Railway (Corporations Canada) | yes | `tinyfish_monitor` | none | yes |
+| Publix (Sunbiz) | no, as expected (main-content page has no labels) | `tinyfish_monitor+fetch` | none | outcome yes; two labels wrong |
+
+Two bugs showed in the Publix files, both fixed in v9:
+
+1. The rechecked record said `retrieved_via: tinyfish_agent` and `extraction: agent_structured_output`, although no Agent ran (the call log shows only the Monitor run and a whole-page Fetch). The code labelled every escalated read as an Agent read. This also had a real cost: flags are compared only with the last read made the same way, so on the first escalated check a new compliance flag would not have been reported. A v9 test shows v8 reporting only `status_changed` where it should also report `flag_added`. Its `content_sha256` was also the hash of Monitor's page, not of the page that was parsed.
+2. The watch warning said the baseline could not be parsed because of "likely bot protection", and that each check would use TinyFish Agent. Neither was true. It now says Monitor reads the main-content page, Sunbiz only parses from the whole page, and each check uses a whole-page Fetch first and the Agent only if that fails.
+
 ## Before you submit
 
-1. Run `npm test` (should be 132 passing).
+1. Run `npm test` (should be 135 passing).
 2. Run `npm run dump` (Fetch only, inside TinyFish's free daily Fetch allowance). It prints whether each parser reads the real Fetch output, for the default and the whole-page version. If a line says a parser failed, send the matching file from `samples/raw/`.
 3. Add TinyFish credit if the wallet is empty, then run `npm run smoke` and read `samples/live-<date>/summary.json`. Each line now shows the `expected` outcome. Open each `source.url` and compare status and numbers by hand.
-4. Monitor create and run-now were confirmed live on 11 Nov 2026 (Tesco watch, no change reported). v7 changed how Corporations Canada and Sunbiz records are read, so run `SMOKE_MONITOR=1 npm run smoke`: it now watches and rechecks Tesco, Canadian National Railway and Publix, then deletes the three Monitors. Expect `recheck_read_via` to be `tinyfish_monitor` for the first two and `tinyfish_monitor+fetch` for Publix (its main-content page has no labels), with no events. If any line differs, send the matching `monitor-*.json` files.
+4. Monitor was confirmed live on 13 Nov 2026 for Companies House, Corporations Canada and Sunbiz (see the sixth run). To repeat it after the v9 fix, run `$env:SMOKE_MONITOR = "1"; npm run smoke` in PowerShell (`SMOKE_MONITOR=1 npm run smoke` on Mac or Linux). In `monitor-fl-sunbiz-by-name-recheck.json`, `record.source.retrieved_via` should now be `tinyfish_fetch` and `extraction` should be `deterministic_parser`.
 5. Start the server with a public `PUBLIC_BASE_URL` (a tunnel is fine), watch one record, and wait for one scheduled run. If the server log shows "TinyFish webhook ignored", the payload shape differs from the docs; map the logged keys in `handleWebhook` (`src/monitor/service.ts`).
 6. Still not confirmed live: the Sunbiz sort-key rule for names unlike the 20 seen (a wrong key costs one Agent confirmation, not a wrong answer), whether Sunbiz detail links stay valid for months, and how GMC and CSLB pages render through Fetch. Each falls back to the Agent if wrong; check `extraction` and `calls` in the smoke output.
 7. Post on LinkedIn tagging TinyFish, and share in #showcase on the TinyFish Discord.

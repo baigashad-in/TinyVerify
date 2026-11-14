@@ -35,6 +35,13 @@ curl -s -X POST localhost:8787/verify \
   -d '{"name":"Tesco PLC","record_type":"company","jurisdiction":"UK"}'
 ```
 
+On Windows PowerShell, use `Copy-Item .env.example .env`, and call the API with `Invoke-RestMethod` (PowerShell's `curl` is a different command):
+
+```powershell
+Invoke-RestMethod -Method Post -Uri http://localhost:8787/verify -ContentType 'application/json' `
+  -Body '{"name":"Tesco PLC","record_type":"company","jurisdiction":"UK"}'
+```
+
 Or from the command line:
 
 ```bash
@@ -135,12 +142,12 @@ TinyFish scheduled run -> POST /webhooks/tinyfish?token=... -> parse -> diff fie
 * **Field diff, not text diff.** Registry pages print the time of each search, so the raw page changes every run. TinyVerify compares status, expiry, renewal date, number, name, disciplinary actions and compliance flags. A timestamp change produces no alert; a status change from Active to Liquidation produces a `critical` `status_changed` event.
 * **Same method, same yardstick.** The parser and the Agent describe one page differently (the Agent does not report compliance flags, and words actions its own way). So actions, flags and exact status wording are compared only with the last read made the same way. Status, number, name and dates are compared across both, with dates only when both reads have one.
 * **Event types:** `status_changed`, `status_wording_changed`, `expiry_changed`, `renewal_due_changed`, `identifier_changed`, `name_changed`, `disciplinary_added`, `disciplinary_removed`, `flag_added`, `flag_removed`, `record_unreadable`, `record_recovered`.
-* **Bot walls.** If Monitor's page cannot be parsed, TinyVerify re-reads the whole page with Fetch (`read_via: tinyfish_monitor+fetch`), then with TinyFish Agent (`read_via: tinyfish_monitor+agent`). If that also fails, it raises one `record_unreadable` warning and keeps the last known status, then `record_recovered` when reading works again.
+* **Bot walls and unlabelled pages.** If Monitor's page cannot be parsed, TinyVerify re-reads the whole page with Fetch (`read_via: tinyfish_monitor+fetch`), then with TinyFish Agent (`read_via: tinyfish_monitor+agent`). Sunbiz always takes the Fetch step, because Monitor reads the main-content page and Sunbiz labels its fields only on the whole page. The stored record says how it was really read (`retrieved_via: tinyfish_fetch`, `extraction: deterministic_parser`), and its `content_sha256` is the hash of the page that was parsed. If that also fails, it raises one `record_unreadable` warning and keeps the last known status, then `record_recovered` when reading works again.
 * **Registries found by Search** have no parser, so each check needs an Agent read. To save cost, the Agent is skipped while the Monitor page is unchanged, but never when the page is a bot wall or nearly empty, and never more than 6 runs in a row.
 * **Safe webhooks.** The webhook URL carries a secret token (TinyFish does not sign payloads). Baseline runs, duplicate deliveries and unknown monitors are ignored.
 * **On demand.** `POST /watches/:id/recheck` (CLI: `npm run cli -- recheck <watch id>`) uses TinyFish Monitor "run now" and processes the result immediately. Useful for demos and when the server has no public URL. `npm run cli -- unwatch <watch id>` stops a watch and deletes its TinyFish Monitor.
 
-Monitor is in beta and enabled per TinyFish account. If your key gets a 403, ask TinyFish support to enable Monitor. Confirmed live on 11 Nov 2026: creating a Monitor on a Companies House record, then a run-now recheck, read the page with the parser and correctly reported no change.
+Monitor is in beta and enabled per TinyFish account. If your key gets a 403, ask TinyFish support to enable Monitor. Confirmed live on 13 Nov 2026 for three registries: a Monitor on a Companies House record (Tesco) and on a Corporations Canada record (Canadian National Railway) was read straight from Monitor's page, a Monitor on a Sunbiz record (Publix) was read through the whole-page Fetch step, and all three run-now rechecks correctly reported no change.
 
 ## API
 
@@ -199,12 +206,14 @@ Set `TINYVERIFY_API_TOKEN` to require `Authorization: Bearer <token>` on every r
 ## Development
 
 ```bash
-npm test            # 132 tests: parsers, matching, routing, pipeline outcomes, Monitor diffing, webhooks, API, regressions, live-run fixes
+npm test            # 135 tests: parsers, matching, routing, pipeline outcomes, Monitor diffing, webhooks, API, regressions, live-run fixes
 npm run typecheck
 npm run examples    # regenerate samples/fixture-examples from fixtures
 npm run smoke       # live checks through TinyFish (needs TINYFISH_API_KEY); SMOKE_MONITOR=1 also watches and rechecks a Companies House, a Corporations Canada and a Sunbiz record
 npm run dump        # save TinyFish Fetch output for registry pages to samples/raw/ and test the parsers on it (Fetch only)
 ```
+
+On Windows PowerShell, set the variable first: `$env:SMOKE_MONITOR = "1"; npm run smoke` (it stays set until the window closes, or `Remove-Item Env:SMOKE_MONITOR`). In Command Prompt, use `set "SMOKE_MONITOR=1" && npm run smoke`; without the quotes cmd stores "1 " with a space and the Monitor step is skipped.
 
 Tests use a fake TinyFish gateway (`test/helpers.ts`) so they run offline. `src/tinyfish/gateway.ts` is the only file that talks to TinyFish, through the official `@tiny-fish/sdk`.
 

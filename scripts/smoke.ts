@@ -6,7 +6,8 @@
  *   SMOKE_GMC_NUMBER=<7 digits> npm run smoke    add a GMC check you are allowed to run
  *   SMOKE_CSLB_NUMBER=<number> npm run smoke     add a CSLB check
  *   SMOKE_CANADA_NUMBER=<corp no> npm run smoke  read a federal corporation by number too
- *   SMOKE_MONITOR=1 npm run smoke      also create a Monitor, run it once, then delete it
+ *   SMOKE_MONITOR=1 npm run smoke      also watch three records, recheck each once, then delete the Monitors
+ *     (PowerShell: $env:SMOKE_MONITOR = "1"; npm run smoke)
  *
  * Person registers are opt-in on purpose: the bounty rules forbid putting other
  * people's personal data in the build or demo, so pick subjects you may share.

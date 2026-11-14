@@ -1,6 +1,6 @@
 {
   "name": "tinyverify",
-  "version": "8.0.0",
+  "version": "9.0.0",
   "description": "Verify licences and registrations from official registries using TinyFish Agent, Fetch, Search and Monitor, then watch them for status changes.",
   "type": "module",
   "license": "MIT",
