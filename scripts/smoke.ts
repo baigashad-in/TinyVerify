@@ -8,6 +8,9 @@
  *   SMOKE_CANADA_NUMBER=<corp no> npm run smoke  read a federal corporation by number too
  *   SMOKE_MONITOR=1 npm run smoke      also watch three records, recheck each once, then delete the Monitors
  *     (PowerShell: $env:SMOKE_MONITOR = "1"; npm run smoke)
+ *   SMOKE_WORLD=1 npm run smoke        add 8 companies in countries without a built-in register (GLEIF + Agent).
+ *     Each can start 1 or 2 Agent runs, so this uses TinyFish credit and can take 10 to 60 minutes.
+ *   SMOKE_ONLY=world                   run only those 8 (with SMOKE_WORLD=1)
  *
  * Person registers are opt-in on purpose: the bounty rules forbid putting other
  * people's personal data in the build or demo, so pick subjects you may share.
@@ -20,6 +23,7 @@ import { loadDotEnv } from "../src/config.js";
 import { MonitorService } from "../src/monitor/service.js";
 import { MemoryStore } from "../src/monitor/store.js";
 import { BILLING_MESSAGE, SdkGateway } from "../src/tinyfish/gateway.js";
+import { HttpGleif } from "../src/gleif/client.js";
 import type { VerifyRequestInput } from "../src/types.js";
 import { verify } from "../src/verify/pipeline.js";
 
@@ -35,10 +39,28 @@ const cases: { label: string; request: VerifyRequestInput; expect?: string }[] =
   {
     label: "discovery-us-state-business",
     request: { name: "Pfizer Inc.", record_type: "business entity", jurisdiction: "New York" },
-    // In three live runs (v5 to v7) the Agent could not complete New York's search app, so the honest answer was source_unavailable.
-    expect: "verified or multiple_matches; source_unavailable if the New York search does not load for the Agent",
+    // In live runs v5 to v10 the Agent could not complete New York's search app, so the honest answer was source_unavailable.
+    // From v12 the register comes from GLEIF's list, and the LEI record (which says Delaware) is shown for reference.
+    expect: "verified; or source_unavailable (with an LEI record and a Delaware warning) if New York's search does not work for the Agent",
   },
 ];
+
+// Countries without a built-in register: large listed companies, whose register entries are public business records.
+const WORLD_EXPECT = "verified; or source_unavailable with an LEI record if the Agent cannot use the national register";
+const world: { label: string; request: VerifyRequestInput; expect?: string }[] = [
+  { label: "world-de", request: { name: "Siemens Aktiengesellschaft", record_type: "company", jurisdiction: "Germany" }, expect: WORLD_EXPECT },
+  { label: "world-nl", request: { name: "ING Groep N.V.", record_type: "company", jurisdiction: "Netherlands" }, expect: WORLD_EXPECT },
+  { label: "world-fr", request: { name: "TotalEnergies SE", record_type: "company", jurisdiction: "France" }, expect: WORLD_EXPECT },
+  { label: "world-jp", request: { name: "Toyota Motor Corporation", record_type: "company", jurisdiction: "Japan" }, expect: WORLD_EXPECT },
+  { label: "world-sg", request: { name: "DBS Group Holdings Ltd", record_type: "company", jurisdiction: "Singapore" }, expect: WORLD_EXPECT },
+  { label: "world-nz", request: { name: "Fonterra Co-operative Group Limited", record_type: "company", jurisdiction: "New Zealand" }, expect: WORLD_EXPECT },
+  { label: "world-in", request: { name: "Infosys Limited", record_type: "company", jurisdiction: "India" }, expect: WORLD_EXPECT },
+  { label: "world-us-wa", request: { name: "Microsoft Corporation", record_type: "corporation", jurisdiction: "Washington" }, expect: WORLD_EXPECT },
+];
+if (process.env.SMOKE_WORLD === "1") {
+  if (process.env.SMOKE_ONLY === "world") cases.length = 0;
+  cases.push(...world);
+}
 
 if (process.env.SMOKE_GMC_NUMBER) {
   cases.push({
@@ -62,13 +84,15 @@ if (process.env.SMOKE_CSLB_NUMBER) {
 // Read TINYFISH_API_KEY (and PUBLIC_BASE_URL, WEBHOOK_SECRET) from .env, as the server and CLI do.
 loadDotEnv();
 const gateway = new SdkGateway(process.env.TINYFISH_API_KEY);
+// Same as the server: GLEIF for companies without a built-in register, unless GLEIF=off.
+const gleif = (process.env.GLEIF ?? "on").toLowerCase() === "off" ? null : new HttpGleif();
 const dir = join("samples", `live-${new Date().toISOString().slice(0, 10)}`);
 await mkdir(dir, { recursive: true });
 
 const summary: Record<string, unknown>[] = [];
 for (const c of cases) {
   const started = Date.now();
-  const result = await verify(c.request, { gateway });
+  const result = await verify(c.request, { gateway, gleif });
   await writeFile(join(dir, `${c.label}.json`), JSON.stringify(result, null, 2));
   const rec = result.records[0];
   const line = {
@@ -79,6 +103,8 @@ for (const c of cases) {
     via: rec?.source.retrieved_via ?? null,
     source: rec?.source.url ?? null,
     calls: result.tinyfish_calls.map((x) => (x.action === "get_contents_full_page" ? "fetch-full" : x.endpoint)).join(","),
+    lei: result.lei_records[0] ? `${result.lei_records[0].legal_name} ${result.lei_records[0].lei} ${result.lei_records[0].registered_as ?? ""}`.trim() : null,
+    register: result.sources_checked.find((s) => s.step === "discover")?.registry_name ?? null,
     expected: c.expect ?? null,
     seconds: Math.round((Date.now() - started) / 1000),
   };
@@ -93,6 +119,7 @@ for (const c of cases) {
 if (process.env.SMOKE_MONITOR === "1") {
   const svc = new MonitorService({
     gateway,
+    gleif,
     store: new MemoryStore(),
     publicBaseUrl: process.env.PUBLIC_BASE_URL ?? null,
     webhookSecret: process.env.WEBHOOK_SECRET ?? "smoke",
