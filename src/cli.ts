@@ -5,6 +5,7 @@ import { MonitorService } from "./monitor/service.js";
 import { FileStore } from "./monitor/store.js";
 import { catalog } from "./registries/index.js";
 import { SdkGateway } from "./tinyfish/gateway.js";
+import { HttpGleif } from "./gleif/client.js";
 import { verify } from "./verify/pipeline.js";
 
 const HELP = `TinyVerify: check a licence or registration on the official registry.
@@ -52,6 +53,7 @@ async function main(): Promise<number> {
 
   const config = loadConfig();
   const gateway = new SdkGateway(config.apiKey);
+  const gleif = config.gleifBase ? new HttpGleif({ base: config.gleifBase }) : null;
   const request = {
     name: values.name,
     record_type: values.type,
@@ -63,7 +65,7 @@ async function main(): Promise<number> {
   };
 
   if (cmd === "verify") {
-    const result = await verify(request, { gateway });
+    const result = await verify(request, { gateway, gleif });
     console.log(JSON.stringify(result, null, 2));
     return result.outcome === "verified" ? 0 : result.outcome === "invalid_input" ? 2 : 1;
   }
@@ -71,6 +73,7 @@ async function main(): Promise<number> {
   const store = await new FileStore(config.dataFile).load();
   const monitors = new MonitorService({
     gateway,
+    gleif,
     store,
     publicBaseUrl: config.publicBaseUrl,
     webhookSecret: config.webhookSecret,

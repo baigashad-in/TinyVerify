@@ -4,12 +4,15 @@ import { loadConfig } from "./config.js";
 import { MonitorService } from "./monitor/service.js";
 import { FileStore } from "./monitor/store.js";
 import { SdkGateway } from "./tinyfish/gateway.js";
+import { HttpGleif } from "./gleif/client.js";
 
 const config = loadConfig();
 const gateway = new SdkGateway(config.apiKey);
+const gleif = config.gleifBase ? new HttpGleif({ base: config.gleifBase }) : null;
 const store = await new FileStore(config.dataFile).load();
 const monitors = new MonitorService({
   gateway,
+  gleif,
   store,
   publicBaseUrl: config.publicBaseUrl,
   webhookSecret: config.webhookSecret,
@@ -17,7 +20,7 @@ const monitors = new MonitorService({
   agentEscalation: config.agentEscalation,
 });
 
-const app = createApp({ gateway, monitors, store, apiToken: config.apiToken });
+const app = createApp({ gateway, gleif, monitors, store, apiToken: config.apiToken });
 
 serve({ fetch: app.fetch, port: config.port }, (info) => {
   console.log(`TinyVerify listening on http://localhost:${info.port}`);

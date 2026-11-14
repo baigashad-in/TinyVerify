@@ -1,4 +1,5 @@
 import { randomUUID, timingSafeEqual } from "node:crypto";
+import type { Gleif } from "../gleif/client.js";
 import { TracedGateway, toMonitorPayload, type Gateway, type MonitorRunPayload } from "../tinyfish/gateway.js";
 import { looksBlocked, type ParsedRecord, type RegistryAdapter } from "../registries/types.js";
 import type { RetrievedVia, TinyFishCall, VerifiedRecord, VerifyResult } from "../types.js";
@@ -9,6 +10,8 @@ import type { Store, Watch } from "./store.js";
 
 export interface MonitorServiceOptions {
   gateway: Gateway;
+  /** GLEIF client, so companies found through the worldwide path can be watched. */
+  gleif?: Gleif | null;
   store: Store;
   /** Public https base URL of this server, used for the TinyFish Monitor webhook. */
   publicBaseUrl: string | null;
@@ -127,7 +130,7 @@ export class MonitorService {
     if (input.callback_url && !/^https?:\/\//i.test(input.callback_url)) {
       throw new WatchError("bad_callback", "callback_url must be an http(s) URL.");
     }
-    const verification = await verify(input.request, { gateway: this.opts.gateway, now: this.now });
+    const verification = await verify(input.request, { gateway: this.opts.gateway, gleif: this.opts.gleif ?? null, now: this.now });
     if (verification.outcome !== "verified" || verification.records.length !== 1) {
       throw new WatchError(
         "not_verified",

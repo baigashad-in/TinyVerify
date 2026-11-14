@@ -12,6 +12,8 @@ export interface Config {
   defaultCron: string;
   agentEscalation: boolean;
   apiToken: string | null;
+  /** GLEIF API base URL, or null when GLEIF=off (companies in other places then use TinyFish Search only). */
+  gleifBase: string | null;
 }
 
 /** Load ./.env into process.env when present (Node 20.12+). Existing variables win. */
@@ -39,5 +41,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     defaultCron: env.DEFAULT_SCHEDULE_CRON?.trim() || "CRON_TZ=UTC 41 6 * * *",
     agentEscalation: (env.AGENT_ESCALATION ?? "on").toLowerCase() !== "off",
     apiToken: env.TINYVERIFY_API_TOKEN?.trim() || null,
+    gleifBase: (env.GLEIF ?? "on").toLowerCase() === "off" ? null : env.GLEIF_API_BASE?.trim() || "https://api.gleif.org/api/v1",
   };
 }

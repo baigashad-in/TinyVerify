@@ -5,12 +5,15 @@ import { WatchError, type MonitorService } from "./monitor/service.js";
 import type { Store } from "./monitor/store.js";
 import { ChangeEventSchema } from "./monitor/diff.js";
 import type { Gateway } from "./tinyfish/gateway.js";
+import type { Gleif } from "./gleif/client.js";
 import { SCHEMA_VERSION, VerifyRequestSchema, VerifyResultSchema } from "./types.js";
 import { loadUiPage } from "./ui.js";
 import { verify } from "./verify/pipeline.js";
 
 export interface AppDeps {
   gateway: Gateway;
+  /** GLEIF client for companies in places without a built-in register (optional). */
+  gleif?: Gleif | null;
   monitors: MonitorService;
   store: Store;
   /**
@@ -88,7 +91,7 @@ export function createApp(deps: AppDeps): Hono {
   app.post("/verify", async (c) => {
     const body = await c.req.json().catch(() => null);
     if (!body) return c.json({ error: "expected a JSON body" }, 400);
-    const result = await verify(body, { gateway: deps.gateway });
+    const result = await verify(body, { gateway: deps.gateway, gleif: deps.gleif ?? null });
     return c.json(result, result.outcome === "invalid_input" ? 400 : 200);
   });
 
