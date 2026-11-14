@@ -131,6 +131,9 @@ button { font: inherit; cursor: pointer; }
 .stamp.verified { --c: var(--green); }
 .stamp.warn { --c: var(--ochre); }
 .stamp.fail { --c: var(--red); }
+.stamp.ref { --c: var(--grey); transform: rotate(0deg); border-style: dashed; font-size: 15px; }
+.extract.lei { border-style: dashed; }
+.extract.lei .subject { font-size: 22px; }
 .stamp.landed { animation: stamp 420ms cubic-bezier(.2, 1.4, .4, 1) both; }
 @keyframes stamp { from { transform: rotate(-14deg) scale(1.6); opacity: 0; } to { transform: rotate(-5deg) scale(1); opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .stamp.landed { animation: none; } }
@@ -232,7 +235,7 @@ footer { padding: 24px 0 40px; color: var(--ink-3); font-size: 13px; }
         </label>
         <label class="check">
           <input type="checkbox" name="allow_discovery" checked>
-          <span>If no built-in register covers the place, look for an official one with TinyFish Search. This uses the Agent and can take a few minutes.</span>
+          <span>If no built-in register covers the place, find the official one (for companies, from GLEIF's list of national registers) and read it with the TinyFish Agent. This can take a few minutes.</span>
         </label>
         <button class="primary" type="submit" id="go">Check the register</button>
         <p class="status-line" id="status" role="status" aria-live="polite"></p>
@@ -247,7 +250,9 @@ footer { padding: 24px 0 40px; color: var(--ink-3); font-size: 13px; }
       </datalist>
       <datalist id="places">
         <option value="UK"><option value="England"><option value="Australia"><option value="NSW"><option value="Canada">
-        <option value="Florida"><option value="California"><option value="New York"><option value="CA">
+        <option value="Florida"><option value="California"><option value="New York"><option value="Delaware"><option value="CA">
+        <option value="Germany"><option value="Netherlands"><option value="France"><option value="Japan"><option value="Singapore">
+        <option value="New Zealand"><option value="Ireland"><option value="India"><option value="Ontario, Canada">
       </datalist>
     </section>
 
@@ -276,7 +281,7 @@ footer { padding: 24px 0 40px; color: var(--ink-3); font-size: 13px; }
     <div>
       <h2>Registers with built-in support</h2>
       <ul class="coverage" id="coverage"><li>Loading.</li></ul>
-      <p class="note">Other places: TinyFish Search looks for an official government register and the Agent reads it.</p>
+      <p class="note">Companies anywhere else: GLEIF's list of about 1,200 national registers names the right one, and the TinyFish Agent reads it. Other record types: TinyFish Search looks for an official register.</p>
     </div>
   </div>
 </section>
@@ -308,6 +313,8 @@ const STAMPS = {
 const VIA = {
   tinyfish_fetch: "TinyFish Fetch",
   tinyfish_agent: "TinyFish Agent",
+  tinyfish_search: "TinyFish Search",
+  gleif_api: "GLEIF API",
   tinyfish_monitor: "TinyFish Monitor",
   "tinyfish_monitor+fetch": "TinyFish Monitor, then a whole-page Fetch",
   "tinyfish_monitor+agent": "TinyFish Monitor, then the Agent",
@@ -471,9 +478,32 @@ function renderResult(r, req, animate) {
     box.append(...checkedSections(r));
     parts.push(box);
   }
+  for (const l of (r.lei_records || []).slice(0, 5)) parts.push(renderLei(l));
   out.replaceChildren(...parts);
   if (!animate) out.querySelectorAll(".stamp").forEach((s) => s.classList.remove("landed"));
   out.querySelector(".extract")?.scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "nearest" });
+}
+
+/* A global LEI register entry: reference only, never a verified answer. */
+function renderLei(l) {
+  const fields = el("dl", { class: "fields" });
+  const add = (term, ...value) => { fields.append(el("dt", { text: term }), el("dd", {}, ...value)); };
+  add("LEI", el("span", { class: "lit", text: l.lei }));
+  if (l.other_names && l.other_names.length) add("Other names", l.other_names.join("; "));
+  add("Entity status", l.entity_status || "Not stated");
+  add("LEI registration", (l.registration_status || "Not stated") + (l.last_update ? ", last updated " + l.last_update.slice(0, 10) : ""));
+  if (l.register_name || l.registered_at) add("National register", l.register_name || l.registered_at, l.register_website ? el("span", { class: "note" }, "  ", safeLink(l.register_website, "website")) : null);
+  if (l.registered_as) add("National number", el("span", { class: "lit", text: l.registered_as }));
+  add("Jurisdiction", [l.jurisdiction, l.city].filter(Boolean).join(", ") || "Not stated");
+  return el("article", { class: "extract lei" },
+    el("div", { class: "extract-head" },
+      el("div", {},
+        el("p", { class: "issuer", text: "Global LEI register (GLEIF). Reference only, not the national register." }),
+        el("h2", { class: "subject", text: l.legal_name }),
+        el("p", { class: "message", text: l.note })),
+      el("div", { class: "stamp ref", role: "img", "aria-label": "Reference only" }, "Reference", el("small", { text: "not verified" }))),
+    fields,
+    el("div", { class: "section" }, el("p", { class: "cite" }, "Source: ", safeLink(l.source_url, "GLEIF record " + l.lei))));
 }
 
 function renderRecord(rec, r, req, first) {
