@@ -4,7 +4,7 @@ Check a licence or registration on the **official registry**, get back a structu
 
 TinyVerify takes a person or business name, a record type and a place. It finds the right official registry, reads the record live through TinyFish, and returns status, number, dates, disciplinary actions, the source link and the time it checked. It never guesses: no match and several matches come back as clear outcomes. TinyFish Monitor then watches the record page and TinyVerify turns page changes into field-level alerts.
 
-Built for TinyFish Bounty Drop 002 (TinyVerify). Uses four TinyFish endpoints: **Fetch, Agent, Search, Monitor**.
+Built for TinyFish Bounty Drop 002 (TinyVerify). Uses four TinyFish endpoints: **Fetch, Agent, Search, Monitor**. For companies in countries without a built-in register, it also uses the free GLEIF API (the global LEI register and its list of about 1,200 national business registers) to find the right register.
 
 ## What it answers
 
@@ -16,7 +16,8 @@ Built for TinyFish Bounty Drop 002 (TinyVerify). Uses four TinyFish endpoints: *
 | Is this Australian business's ABN active? | ABN Lookup (Australian Business Register) |
 | Is this Canadian federal corporation active? | Corporations Canada |
 | Is this Florida company active? | Sunbiz (Florida Division of Corporations) |
-| Anything else, anywhere | TinyFish Search finds the official government registry, TinyFish Agent reads it. Results are labelled `curated: false`. |
+| Is this company registered, in any other country? | GLEIF's list of national registers names the register, the global LEI register often gives the company's number there, TinyFish Search finds the register's search page, and TinyFish Agent reads the record. Results are labelled `curated: false`. **Not yet confirmed in a live run**; see "Companies worldwide". |
+| Other licences, anywhere | TinyFish Search looks for an official government board, and TinyFish Agent reads it. In live runs so far, this path has not produced a verified record. |
 
 ## Quick start
 
@@ -64,6 +65,23 @@ The page builds everything with `textContent`, so text from a registry is never 
 
 In PowerShell: `npm run build; npm start`, then open http://localhost:8787.
 
+## Companies worldwide (v12)
+
+For a company in a place without a built-in register (Germany, Japan, New York, Ontario...), TinyVerify does this:
+
+1. **Find the company on the global LEI register** (GLEIF, about 2.9 million entities). It searches by exact legal name, then full text (which includes other names, translations and transliterations), then a fuzzy name search. Only close matches in the requested country are kept, and branch or fund entries are dropped when the company itself is listed. An LEI record names the company's **national register** (an RA code) and its **number there**.
+2. **Pick the national register** from GLEIF's Registration Authorities List (about 1,200 registers in more than 230 jurisdictions, with their websites). It uses the register in the company's LEI record. If there is none, it samples current LEI records filed in that place and uses the register most of them are filed with. A US company needs a state (companies register by state), unless its LEI record names one.
+3. **Find the register's search page** with TinyFish Search, limited to that register's own website (`include_domains`).
+4. **Read the record with TinyFish Agent**, by the company number when one is known (from the request or the LEI record), otherwise by name. The Agent's browser uses a proxy in that country, and it is told the site may not be in English and must copy values without translating. Status words in other languages are mapped (for example "aktiv", "gelöscht", "radiée", "ingeschreven", "en liquidation"), and the register's exact wording is always kept.
+
+**Only the national register can make an answer `verified`.** Matching LEI entries are returned in `lei_records` with `counts_as_verified: false`, and the web page shows them as "Reference, not verified". If the national register cannot be read, the answer stays `source_unavailable`, and the message says what the LEI register shows.
+
+If a register writes the name in another language or script (for example Japanese), the record is accepted when its number came from the LEI record and its name matches one of that LEI record's names; a warning says so.
+
+GLEIF is called directly over HTTPS, not through TinyFish: it is a plain JSON API, so a browser or page reader would add nothing. Set `GLEIF=off` to use TinyFish Search discovery only (the v11 behaviour).
+
+**What is and is not known.** The code is tested offline with invented companies and registers (`test/worldwide.test.ts`). It was built where the GLEIF API could not be reached, so the response parser follows GLEIF's documentation and an open-source GLEIF client. `npm run dump:gleif` checks the real API from your machine without any TinyFish credit. Whether the Agent can use each national register is not known until it is tried: some registers charge, need a login, show a CAPTCHA, or only work in their own language. Most small businesses have no LEI, so for them step 1 finds nothing and step 4 searches by name. Run `SMOKE_WORLD=1` to try 8 countries live.
+
 ## Request
 
 | Field | Required | Meaning |
@@ -88,7 +106,7 @@ Every response has the same shape, so other tools can rely on it. `GET /schema` 
 | `name_mismatch` | The number exists but belongs to a different name. The record is returned so you can see who it belongs to. |
 | `multiple_matches` | Several records match. None is chosen. `candidates` lists them with numbers to re-run with. |
 | `no_match` | The registry has no matching record. Near misses are listed for review, clearly scored. |
-| `source_unavailable` | The registry could not be read (bot wall, outage). This is never reported as "no match". |
+| `source_unavailable` | The registry could not be read (bot wall, outage). This is never reported as "no match". An LEI record, if found, is in `lei_records` but does not change this outcome. |
 | `unsupported` | No curated registry, and search found no official government source. |
 | `invalid_input` | Bad request, or a number in the wrong format (for example an ABN that fails its check digit). |
 
@@ -102,7 +120,7 @@ Each record in `records` contains:
 * `source`: the official `url` for this exact record, `retrieved_via` (tinyfish_fetch or tinyfish_agent), `extraction` method, verbatim `evidence` lines, `content_sha256`, the registry's own timestamp, and the agent run id
 * `checked_at` and `match` (how the record was matched and the score)
 
-The response also lists `sources_checked` (every registry page consulted and what happened) and `tinyfish_calls` (every TinyFish call made for this answer).
+The response also lists `sources_checked` (every registry page and GLEIF lookup consulted and what happened), `tinyfish_calls` (every TinyFish call made for this answer) and `lei_records` (matching entries from the global LEI register, for reference only).
 
 Example outputs, built from fictional test fixtures to show the shape: [`samples/fixture-examples/`](samples/fixture-examples/). Run `npm run smoke` to produce live results in `samples/live-<date>/`.
 
@@ -112,7 +130,7 @@ Example outputs, built from fictional test fixtures to show the shape: [`samples
 | :-- | :-- |
 | **Fetch** | Reads registry pages live (`ttl: 0`, markdown). Used for record pages (Companies House, ABN Lookup, GMC, CSLB, Corporations Canada, Sunbiz) and for the Companies House, ABN Lookup, Corporations Canada and Sunbiz search pages. A deterministic parser per registry turns the page into fields and keeps the exact lines it used as evidence. Fetch's default "main content" extraction can drop result lists and record tables, so a page that loads but does not parse is fetched once more as the whole page (`include_selectors: ["body"]`) before the Agent is used. |
 | **Agent** | Handles everything Fetch cannot: search forms that have no result URL (GMC, CSLB), Sunbiz lookups by document number, confirming a Sunbiz "not found", bot-protected pages (stealth browser, local proxy country), and any page the parser cannot read. Runs use `output_schema` so results come back as typed JSON with a verbatim `evidence_quote`, and a `page_state` field so a CAPTCHA or error page is reported as unavailable instead of "not found". |
-| **Search** | Finds the official registry for places without a curated adapter (for example a Texas nursing licence). Only government domains and known statutory regulators pass; aggregators like OpenCorporates are rejected. If no official source is found, the answer is `unsupported`, never a third-party site. |
+| **Search** | For companies in other countries, finds the search page on the national register's own website (limited with `include_domains` to the site GLEIF lists). For other record types, finds the official registry itself (for example a Texas nursing licence). Only government domains, known statutory regulators and the registers in GLEIF's list pass; aggregators like OpenCorporates are rejected. If no official source is found, the answer is `unsupported`, never a third-party site. |
 | **Monitor** | `POST /watch` verifies a record, then creates a Page Monitor on the record's own URL with a plain-English `purpose` and a webhook. Each scheduled run posts the fresh page to `/webhooks/tinyfish`. TinyVerify parses it, compares fields with the last known record and raises typed change events. |
 
 Not used: the Browser API. Agent covers the interactive work, so adding Browser would only pad the endpoint count.
@@ -209,6 +227,7 @@ Set `TINYVERIFY_API_TOKEN` to require `Authorization: Bearer <token>` on every r
 * **ABN Lookup** name search may show active ABNs only. Search by ABN to check a cancelled one.
 * **First page only.** Only the first page of search results is compared; a warning says when the registry reports more.
 * **Discovered registries** pass an official-domain check but are not hand-verified; they carry a warning and `curated: false`. An official page is used only if its address or title looks like a register search (for US companies the query asks for the Secretary of State search). For a company register the page must also say it searches ("search", "lookup", "inquiry"). Information pages, guides, forms, tax letters and agency directory cards are skipped; if nothing qualifies the answer is `unsupported` and no Agent run is started (live runs had picked a tax-letter page, a city information page and the California portal's "Secretary of State (SOS)" directory card). If the Agent run on a discovered page fails or times out, other name forms are not tried, since the page itself is the likely problem; curated registries do try them. The discovery step in `sources_checked` lists the titles and links of skipped pages, and when an ambiguous place such as "CA" is answered from one side only, a warning names the place that was not checked.
+* **Companies worldwide are not yet confirmed live.** See "Companies worldwide": the GLEIF parser was written from documentation, and each national register is read by the Agent without a built-in parser. Expect some registers to fail (paid, login, CAPTCHA, or a search the Agent cannot complete); the answer is then `source_unavailable` with the LEI record shown for reference. The LEI register mostly covers larger companies.
 * **TinyFish Search results vary between runs.** The same discovery query for California returned only information pages on 12 and 13 Nov 2026 (no Agent run) and `businesssearch.sos.ca.gov` on 14 Nov 2026 (one Agent run, which failed after 42 s). The output says which pages were used or skipped either way.
 * **Fetch is usually fast, not always.** Live Fetch calls took 1 to 9 seconds, with one outlier of 123 seconds (a Companies House record, 12 Nov 2026) that still returned the page. TinyVerify waits up to 150 seconds for a Fetch call and retries once after a timeout or proxy error.
 * **TinyFish credit.** Agent runs need wallet credit. When TinyFish reports an empty wallet, TinyVerify stops the request at once and says so, instead of trying every registry and name form.
@@ -218,20 +237,24 @@ Set `TINYVERIFY_API_TOKEN` to require `Authorization: Bearer <token>` on every r
 ## Privacy
 
 * No personal data is committed. Every person and small business in the test fixtures is invented, with invented addresses and numbers from ranges the registers have not issued (see `test/fixtures/README.md`). The only real entities are four large companies: Tesco PLC, Woolworths Group Limited, Canadian National Railway Company and Publix Super Markets, Inc. Officer and director names on their live pages were not copied.
+* For companies outside the built-in registers, the company name and place are sent to the GLEIF API (api.gleif.org) as well as to TinyFish. `GLEIF=off` stops that.
 * `data/` (watched records), `samples/live-*` (live results) and `samples/raw/` (page dumps) are git-ignored. Person registers are opt-in in the smoke test.
 * The web page loads two fonts (Public Sans and IBM Plex Mono) from Google Fonts, so the browser contacts Google when the page opens. If that is blocked, the page uses system fonts and works the same. The page sends nothing else to any server but TinyVerify.
 
 ## Development
 
 ```bash
-npm test            # 140 tests: parsers, matching, routing, pipeline outcomes, Monitor diffing, webhooks, API, web page, regressions, live-run fixes
+npm test            # 156 tests: parsers, matching, routing, pipeline outcomes, worldwide companies, Monitor diffing, webhooks, API, web page, regressions, live-run fixes
 npm run typecheck
 npm run examples    # regenerate samples/fixture-examples from fixtures
 npm run smoke       # live checks through TinyFish (needs TINYFISH_API_KEY); SMOKE_MONITOR=1 also watches and rechecks a Companies House, a Corporations Canada and a Sunbiz record
 npm run dump        # save TinyFish Fetch output for registry pages to samples/raw/ and test the parsers on it (Fetch only)
+npm run dump:gleif  # call the GLEIF API, save the raw answers to samples/raw/gleif-<date>/ and show what TinyVerify reads (no TinyFish)
 ```
 
 On Windows PowerShell, set the variable first: `$env:SMOKE_MONITOR = "1"; npm run smoke` (it stays set until the window closes, or `Remove-Item Env:SMOKE_MONITOR`). In Command Prompt, use `set "SMOKE_MONITOR=1" && npm run smoke`; without the quotes cmd stores "1 " with a space and the Monitor step is skipped.
+
+To try companies in 8 more countries (Germany, the Netherlands, France, Japan, Singapore, New Zealand, India and Washington state), run `npm run dump:gleif` first (free, about a minute), then `$env:SMOKE_WORLD = "1"; $env:SMOKE_ONLY = "world"; npm run smoke`. Each case can start one or two Agent runs, so this uses TinyFish credit and can take 10 to 60 minutes. Clear the variables afterwards with `Remove-Item Env:SMOKE_WORLD, Env:SMOKE_ONLY`.
 
 Tests use a fake TinyFish gateway (`test/helpers.ts`) so they run offline. `src/tinyfish/gateway.ts` is the only file that talks to TinyFish, through the official `@tiny-fish/sdk`.
 
@@ -240,6 +263,9 @@ src/
   verify/pipeline.ts      routing, matching, Fetch then Agent, result assembly
   registries/*.ts         one adapter per registry: URLs, parser, status mapping, Monitor purpose
   registries/discovery.ts official-domain check for registries found by Search
+  registries/places.ts    any country, US state or Canadian province to an ISO code
+  gleif/client.ts         GLEIF API: LEI register search, register list, samples by place
+  verify/worldwide.ts     companies in places without a built-in register
   monitor/service.ts      watch, webhook, recheck, escalation to Agent
   monitor/diff.ts         field-level change detection
   tinyfish/gateway.ts     TinyFish SDK calls and the per-answer call log

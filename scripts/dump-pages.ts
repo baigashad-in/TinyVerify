@@ -18,7 +18,9 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { loadDotEnv } from "../src/config.js";
+import { canadaSearchUrl } from "../src/registries/corporationsCanada.js";
 import { ADAPTERS } from "../src/registries/index.js";
+import { sunbizSearchUrl } from "../src/registries/sunbiz.js";
 import { SdkGateway, type FetchOutcome } from "../src/tinyfish/gateway.js";
 import { isOnDomains } from "../src/util/text.js";
 
@@ -27,13 +29,12 @@ const DEFAULT_URLS = [
   "https://find-and-update.company-information.service.gov.uk/company/00445790",
   "https://abr.business.gov.au/ABN/View?abn=88000014675",
   "https://abr.business.gov.au/Search/ResultsActive?SearchText=Woolworths%20Group%20Limited",
-  // Probes for the next parsers. These URL patterns were read from links in
-  // live results (12 Nov 2026); whether they return results through Fetch is
-  // exactly what this dump checks.
-  "https://abr.business.gov.au/Search/ResultsAll?SearchText=Woolworths%20Group%20Limited",
-  "https://ised-isde.canada.ca/cc/lgcy/fdrlCrpSrch.html?p=0&crpNm=Canadian%20National%20Railway&crpNmbr=&bsNmbr=&cProv=&cStatus=&cAct=",
+  // The search URLs the Canada and Sunbiz adapters build since v7 (Fetch
+  // instead of Agent). The 12 Nov 2026 dump proved the URL patterns; these
+  // check the exact URLs the code now sends, for the smoke-test names.
+  canadaSearchUrl("Canadian National Railway Company"),
   "https://ised-isde.canada.ca/cc/lgcy/fdrlCrpDtls.html?corpId=0105333",
-  "https://search.sunbiz.org/Inquiry/CorporationSearch/SearchResults/EntityName/Publix%20Super%20Markets/Page1?searchNameOrder=PUBLIXSUPERMARKETS",
+  sunbizSearchUrl("Publix Super Markets, Inc."),
   "https://search.sunbiz.org/Inquiry/CorporationSearch/SearchResultDetail?inquirytype=EntityName&directionType=Initial&searchNameOrder=PUBLIXSUPERMARKETS%201122521&aggregateId=domp-112252-9281a312-b924-4aa8-b259-e4e9dc29322d&searchTerm=Publix%20Super%20Markets%2C%20Inc.&listNameOrder=PUBLIXSUPERMARKETS%201122521",
 ];
 

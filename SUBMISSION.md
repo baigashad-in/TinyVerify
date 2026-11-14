@@ -5,7 +5,7 @@
 | Requirement | Where it is met |
 | :-- | :-- |
 | Takes a person or business name, a licence or record type, and a jurisdiction | `POST /verify` and `tinyverify verify` (`name`, `record_type`, `jurisdiction`, optional `licence_number`) |
-| Checks at least two official registries or licensing boards | Six curated registries in four countries (UK Companies House, UK GMC, Australia ABN Lookup, California CSLB, Corporations Canada, Florida Sunbiz), plus any official registry found by TinyFish Search |
+| Checks at least two official registries or licensing boards | Six curated registries in four countries (UK Companies House, UK GMC, Australia ABN Lookup, California CSLB, Corporations Canada, Florida Sunbiz). For companies elsewhere, the national register from GLEIF's list (not yet confirmed live). For other record types, an official registry found by TinyFish Search |
 | Structured record: status, number, expiry, disciplinary actions, source link, checked time | `records[]` in schema `tinyverify.v1` (`GET /schema`) |
 | Uses TinyFish Monitor to flag status changes | `POST /watch` creates a Page Monitor per record; `/webhooks/tinyfish` diffs fields and emits `status_changed` and other events |
 | Explains how Agent, Fetch and Monitor are used | README, "How TinyFish is used" |
@@ -15,7 +15,7 @@
 | Criterion | How TinyVerify handles it |
 | :-- | :-- |
 | Accuracy | Live reads (`ttl: 0`) of the official page, with a whole-page re-read before any Agent fallback; compliance flags only from the record's own fields; deterministic parsers keep verbatim evidence lines; the page must show the requested number (Agent results without it are rejected); the opened record must match the chosen search row and the request; ABN check digit |
-| Coverage | 6 curated registries, 3 record types, 4 countries; discovery for other places |
+| Coverage | 6 curated registries, 3 record types, 4 countries; companies in any country through GLEIF's list of national registers plus the Agent (not yet confirmed live); Search discovery for other record types |
 | Ambiguity | `multiple_matches`, `no_match` with scored near misses, `name_mismatch`, "CA" checked as both Canada and California, longer place names read with a disclosed assumption, name variants and previous names; an unread name form gives `source_unavailable`, never `no_match` |
 | Monitor reliability | Field diff ignores timestamp noise; flags and actions compared only between reads of the same kind, so switching between Fetch and Agent raises no false alerts; Agent escalation behind bot walls; forced Agent re-reads for registries found by Search; one `record_unreadable` alert then `record_recovered`; dedupe and token check |
 | Trust and reuse | Every record has `source.url`, `checked_at`, evidence and the TinyFish call log; one JSON Schema for every response |
@@ -143,9 +143,15 @@ v11 adds a web page served by the same server at http://localhost:8787. It cover
 
 How it was checked: 5 new tests (the page at `/` and `/ui`, the JSON index still served to API clients, the token rule, the CSP hashes, and that the script parses and never builds HTML from strings), and a headless Chromium run against the fake gateway and fixtures (verify with flags, several matches, no match, watch, recheck with a status change from Active to Liquidation, two-step stop, dark mode, and a 390 px phone width with no sideways scrolling). It has not yet been used against live TinyFish.
 
+## Companies worldwide (v12)
+
+v12 adds a general path for companies in any country without a built-in register. GLEIF's free Registration Authorities List (about 1,200 national business registers in more than 230 jurisdictions, with websites) picks the register; the global LEI register finds larger companies and their number in that register; TinyFish Search finds the register's search page on its own site; TinyFish Agent reads the record there, with a proxy in that country. Only the national register can make an answer `verified`. LEI entries are shown for reference with `counts_as_verified: false`.
+
+Checked so far: 16 new offline tests with invented companies and registers (Germany by LEI number, a register that cannot be read, a Japanese register name matched through the LEI record, a New York request for a Delaware company, the Netherlands without an LEI, a US company with no state, GLEIF down, GLEIF response parsing with a server-error retry, and moving on when the first search only finds companies in another country). Not yet checked: the real GLEIF responses (the sandbox could not reach api.gleif.org; `npm run dump:gleif` checks them) and whether the Agent can use each national register (`SMOKE_WORLD=1`).
+
 ## Before you submit
 
-1. Run `npm test` (should be 140 passing). Then `npm run build; npm start`, open http://localhost:8787, and run the Tesco example and one watch and recheck from the page.
+1. Run `npm test` (should be 156 passing). Run `npm run dump:gleif` (no TinyFish credit) and send the output, so the GLEIF parser can be checked against real responses. Then `npm run build; npm start`, open http://localhost:8787, and run the Tesco example and one watch and recheck from the page.
 2. Run `npm run dump` (Fetch only, inside TinyFish's free daily Fetch allowance). It prints whether each parser reads the real Fetch output, for the default and the whole-page version. If a line says a parser failed, send the matching file from `samples/raw/`.
 3. Add TinyFish credit if the wallet is empty, then run `npm run smoke` and read `samples/live-<date>/summary.json`. Each line now shows the `expected` outcome. Open each `source.url` and compare status and numbers by hand.
 4. Monitor was confirmed live on 13 and 14 Nov 2026 for Companies House, Corporations Canada and Sunbiz, including the v9 labels (see the sixth and seventh runs). To repeat it, run `$env:SMOKE_MONITOR = "1"; npm run smoke` in PowerShell (`SMOKE_MONITOR=1 npm run smoke` on Mac or Linux).
@@ -157,7 +163,7 @@ How it was checked: 5 new tests (the page at `/` and `/ui`, the JSON index still
 
 > I built TinyVerify for the TinyFish student bounty: give it a person or business, a licence type and a place, and it returns a verified record from the official registry, then watches it for changes.
 >
-> It covers UK Companies House, the UK GMC medical register, Australia's ABN Lookup, California's contractor board, Corporations Canada and Florida's Sunbiz, and uses TinyFish Search to find the official registry anywhere else.
+> It has built-in support for UK Companies House, the UK GMC medical register, Australia's ABN Lookup, California's contractor board, Corporations Canada and Florida's Sunbiz. For companies elsewhere, it uses GLEIF's list of about 1,200 national registers to pick the right one and the TinyFish Agent to read it, and it says plainly when a register could not be read.
 >
 > How it uses TinyFish:
 > Fetch reads record pages live and a parser keeps the exact lines as evidence.

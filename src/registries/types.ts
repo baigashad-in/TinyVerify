@@ -67,6 +67,14 @@ export interface FetchSearchSpec {
    * showed never parses, to save the call. Default: ["default", "full"].
    */
   fetchModes?: ("default" | "full")[];
+  /**
+   * Set when the results page is an alphabetical list that starts where the
+   * query sorts (Sunbiz), not a list of matches. Returns the sort key sent to
+   * the registry. Name forms with the same key are searched once, and a list
+   * with no close name is confirmed once with TinyFish Agent before the tool
+   * reports no match, because the key rule is inferred from live pages.
+   */
+  browseKey?(query: string): string;
   /** Search form used when the fetch view cannot be read. */
   agentFallbackUrl: string;
   agentInstructions(query: string, kind: EntityKind | null): string;
