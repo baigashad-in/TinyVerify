@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { z } from "zod";
 import { catalog } from "./registries/index.js";
 import { WatchError, type MonitorService } from "./monitor/service.js";
@@ -6,13 +6,17 @@ import type { Store } from "./monitor/store.js";
 import { ChangeEventSchema } from "./monitor/diff.js";
 import type { Gateway } from "./tinyfish/gateway.js";
 import { SCHEMA_VERSION, VerifyRequestSchema, VerifyResultSchema } from "./types.js";
+import { loadUiPage } from "./ui.js";
 import { verify } from "./verify/pipeline.js";
 
 export interface AppDeps {
   gateway: Gateway;
   monitors: MonitorService;
   store: Store;
-  /** When set, every route except the TinyFish webhook needs "Authorization: Bearer <token>". */
+  /**
+   * When set, every API route needs "Authorization: Bearer <token>". The web
+   * page, /health and the TinyFish webhook (which has its own secret) do not.
+   */
   apiToken: string | null;
 }
 
@@ -26,14 +30,30 @@ export function createApp(deps: AppDeps): Hono {
   const app = new Hono();
 
   app.use("*", async (c, next) => {
-    if (!deps.apiToken || c.req.path === "/webhooks/tinyfish" || c.req.path === "/health") return next();
+    const open = c.req.path === "/webhooks/tinyfish" || c.req.path === "/health" || (c.req.method === "GET" && (c.req.path === "/" || c.req.path === "/ui"));
+    if (!deps.apiToken || open) return next();
     const auth = c.req.header("authorization") ?? "";
     if (auth !== `Bearer ${deps.apiToken}`) return c.json({ error: "unauthorized" }, 401);
     return next();
   });
 
-  app.get("/", (c) =>
-    c.json({
+  const page = (c: Context) => {
+    const ui = loadUiPage();
+    if (!ui) return c.text("public/index.html is missing from this install.", 500);
+    c.header("Content-Security-Policy", ui.csp);
+    c.header("X-Content-Type-Options", "nosniff");
+    c.header("Referrer-Policy", "no-referrer");
+    c.header("Cache-Control", "no-cache");
+    return c.html(ui.html);
+  };
+
+  app.get("/ui", page);
+
+  // Browsers ask for HTML and get the page; API clients keep the JSON index.
+  app.get("/", (c) => {
+    c.header("Vary", "Accept");
+    if ((c.req.header("accept") ?? "").includes("text/html")) return page(c);
+    return c.json({
       name: "TinyVerify",
       schema_version: SCHEMA_VERSION,
       endpoints: {
@@ -47,9 +67,10 @@ export function createApp(deps: AppDeps): Hono {
         "GET /events": "change events (optional ?since=ISO&watch_id=)",
         "POST /webhooks/tinyfish?token=": "TinyFish Monitor webhook receiver",
         "GET /schema": "JSON Schema of requests, results and events",
+        "GET /ui": "the web page (also served at / to browsers)",
       },
-    }),
-  );
+    });
+  });
 
   app.get("/health", (c) => c.json({ ok: true }));
 

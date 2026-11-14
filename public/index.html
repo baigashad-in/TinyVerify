@@ -1,0 +1,710 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TinyVerify</title>
+<meta name="description" content="Check a person or business on the official register, then watch the record for changes.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Public+Sans:wght@400;500;600;700;800&display=swap">
+<style>
+:root {
+  --paper: #f3f5f7;
+  --sheet: #ffffff;
+  --ink: #1b2a3a;
+  --ink-2: #4a5a6a;
+  --ink-3: #6d7b88;
+  --rule: #c9d2db;
+  --rule-2: #e2e7ec;
+  --blue: #1f4e79;
+  --blue-ink: #ffffff;
+  --blue-soft: #e5edf5;
+  --green: #1e7b4f;
+  --ochre: #9a6200;
+  --red: #b3261e;
+  --grey: #5b6875;
+  --focus: #2f7fd1;
+  --sans: "Public Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #10161d;
+    --sheet: #18212b;
+    --ink: #e4e9ee;
+    --ink-2: #b4bfca;
+    --ink-3: #8b98a5;
+    --rule: #33414f;
+    --rule-2: #26313c;
+    --blue: #7fb0e0;
+    --blue-ink: #0d1620;
+    --blue-soft: #1d2b3a;
+    --green: #5cc28e;
+    --ochre: #e0a643;
+    --red: #f07a70;
+    --grey: #9aa6b2;
+    --focus: #8cc2f5;
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font: 400 16px/1.55 var(--sans);
+}
+a { color: var(--blue); text-underline-offset: 2px; }
+:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; border-radius: 4px; }
+.wrap { max-width: 1240px; margin: 0 auto; padding: 0 24px; }
+
+/* Masthead */
+.masthead { border-bottom: 1px solid var(--rule); background: var(--sheet); }
+.masthead .wrap { display: flex; align-items: center; gap: 24px; padding-top: 18px; padding-bottom: 18px; flex-wrap: wrap; }
+.brand { font-weight: 800; font-size: 22px; letter-spacing: -0.01em; color: var(--ink); text-decoration: none; display: flex; align-items: center; gap: 10px; }
+.brand-mark { width: 26px; height: 26px; border: 2.5px solid var(--blue); border-radius: 50%; display: grid; place-items: center; }
+.brand-mark::after { content: ""; width: 10px; height: 6px; border-left: 2.5px solid var(--blue); border-bottom: 2.5px solid var(--blue); transform: rotate(-45deg) translate(1px, -1px); }
+.tagline { color: var(--ink-2); font-size: 15px; flex: 1; min-width: 220px; }
+.token { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--ink-2); white-space: nowrap; }
+.token input { width: 180px; }
+
+/* Layout */
+main .wrap { display: grid; grid-template-columns: 380px minmax(0, 1fr); gap: 32px; padding-top: 32px; padding-bottom: 48px; align-items: start; }
+@media (max-width: 900px) { main .wrap { grid-template-columns: 1fr; gap: 24px; padding-top: 20px; } }
+
+/* Form */
+h1 { font-size: 28px; line-height: 1.15; letter-spacing: -0.015em; margin: 0 0 6px; font-weight: 800; }
+h2 { font-size: 20px; letter-spacing: -0.01em; margin: 0 0 12px; font-weight: 700; }
+.lede { color: var(--ink-2); margin: 0 0 20px; font-size: 15px; }
+form { display: grid; gap: 14px; }
+label.field { display: grid; gap: 5px; font-weight: 600; font-size: 14px; }
+.hint { font-weight: 400; color: var(--ink-3); font-size: 13px; }
+input[type="text"], input[type="password"] {
+  font: inherit; font-size: 16px; color: var(--ink); background: var(--sheet);
+  border: 1.5px solid var(--rule); border-radius: 6px; padding: 9px 11px; width: 100%;
+}
+input[type="text"]:focus, input[type="password"]:focus { border-color: var(--blue); outline: none; box-shadow: 0 0 0 3px var(--blue-soft); }
+.row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.check { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; color: var(--ink-2); }
+.check input { margin-top: 3px; width: 16px; height: 16px; accent-color: var(--blue); }
+button { font: inherit; cursor: pointer; }
+.primary {
+  background: var(--blue); color: var(--blue-ink); border: 0; border-radius: 6px;
+  padding: 12px 18px; font-weight: 700; font-size: 16px;
+}
+.primary:disabled { opacity: 0.65; cursor: progress; }
+.secondary {
+  background: transparent; color: var(--blue); border: 1.5px solid var(--blue); border-radius: 6px;
+  padding: 8px 14px; font-weight: 600; font-size: 14px;
+}
+.secondary:disabled { opacity: 0.6; cursor: progress; }
+.quiet { background: none; border: 0; color: var(--blue); padding: 4px 0; font-size: 14px; font-weight: 600; text-decoration: underline; text-underline-offset: 2px; }
+.danger { color: var(--red); border-color: var(--red); }
+.examples { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--rule); }
+.examples p { margin: 0 0 8px; font-size: 14px; color: var(--ink-2); }
+.examples ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.status-line { font-size: 14px; color: var(--ink-2); min-height: 22px; margin: 0; }
+
+/* Empty state */
+.empty { border: 1.5px dashed var(--rule); border-radius: 10px; padding: 36px 32px; color: var(--ink-2); background: transparent; }
+.empty h2 { color: var(--ink); }
+.empty ol { margin: 12px 0 0; padding-left: 20px; display: grid; gap: 6px; }
+
+/* The register extract */
+.extract { background: var(--sheet); border: 1px solid var(--rule); border-radius: 10px; position: relative; overflow: hidden; }
+.extract + .extract { margin-top: 20px; }
+.extract-head { padding: 24px 28px 18px; border-bottom: 1px solid var(--rule-2); display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px; align-items: start; }
+.issuer { font-size: 14px; color: var(--ink-2); margin: 0 0 6px; }
+.subject { font-size: 30px; line-height: 1.15; font-weight: 800; letter-spacing: -0.015em; margin: 0; overflow-wrap: anywhere; }
+.message { margin: 10px 0 0; color: var(--ink-2); font-size: 15px; max-width: 70ch; }
+
+.stamp {
+  --c: var(--grey);
+  color: var(--c); border: 3px double var(--c); border-radius: 8px;
+  padding: 8px 14px 7px; font-weight: 800; font-size: 19px; letter-spacing: 0.06em; text-transform: uppercase;
+  transform: rotate(-5deg); white-space: nowrap; line-height: 1.1; text-align: center;
+}
+.stamp small { display: block; font-size: 11px; letter-spacing: 0.04em; font-weight: 700; margin-top: 3px; }
+.stamp.verified { --c: var(--green); }
+.stamp.warn { --c: var(--ochre); }
+.stamp.fail { --c: var(--red); }
+.stamp.landed { animation: stamp 420ms cubic-bezier(.2, 1.4, .4, 1) both; }
+@keyframes stamp { from { transform: rotate(-14deg) scale(1.6); opacity: 0; } to { transform: rotate(-5deg) scale(1); opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .stamp.landed { animation: none; } }
+
+@media (max-width: 600px) {
+  .extract-head { grid-template-columns: 1fr; padding: 18px 18px 14px; }
+  .extract-head .stamp { grid-row: 1; justify-self: start; font-size: 16px; }
+  .subject { font-size: 24px; }
+  .fields, .section, .actions, details summary, details .inner { padding-left: 18px; padding-right: 18px; }
+}
+.fields { margin: 0; padding: 20px 28px; display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 10px 20px; }
+@media (max-width: 600px) { .fields { grid-template-columns: 1fr; gap: 2px 0; } .fields dd { margin-bottom: 10px; } }
+.fields dt { color: var(--ink-3); font-size: 14px; padding-top: 1px; }
+.fields dd { margin: 0; overflow-wrap: anywhere; }
+.lit { font-family: var(--mono); font-size: 14.5px; }
+.status-word { font-weight: 700; }
+.status-word.active { color: var(--green); }
+.status-word.bad { color: var(--red); }
+.status-word.mid { color: var(--ochre); }
+.section { padding: 18px 28px; border-top: 1px solid var(--rule-2); }
+.section h3 { font-size: 15px; margin: 0 0 10px; font-weight: 700; }
+blockquote.ev { margin: 0 0 8px; padding: 6px 12px; border-left: 3px solid var(--blue); background: var(--blue-soft); font-family: var(--mono); font-size: 14px; overflow-wrap: anywhere; border-radius: 0 4px 4px 0; }
+.flag { margin: 0 0 10px; }
+.flag strong { color: var(--ochre); }
+.flag.critical strong { color: var(--red); }
+.cite { font-size: 14px; color: var(--ink-2); }
+.cite a { overflow-wrap: anywhere; }
+.actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding: 16px 28px 22px; border-top: 1px solid var(--rule-2); }
+.note { font-size: 14px; color: var(--ink-2); }
+
+.warnings { margin: 0 0 20px; padding: 0; list-style: none; display: grid; gap: 8px; }
+.warnings li { background: var(--sheet); border: 1px solid var(--rule); border-left: 4px solid var(--ochre); border-radius: 6px; padding: 10px 14px; font-size: 15px; }
+
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th { text-align: left; font-weight: 600; color: var(--ink-3); border-bottom: 1px solid var(--rule); padding: 6px 10px 6px 0; }
+td { border-bottom: 1px solid var(--rule-2); padding: 7px 10px 7px 0; vertical-align: top; overflow-wrap: anywhere; }
+.num { text-align: right; font-variant-numeric: tabular-nums; }
+.scroll { overflow-x: auto; }
+
+details { border-top: 1px solid var(--rule-2); }
+details summary { cursor: pointer; padding: 14px 28px; font-weight: 600; font-size: 15px; list-style-position: inside; }
+details[open] summary { color: var(--blue); }
+details .inner { padding: 0 28px 18px; }
+pre.raw { margin: 0; max-height: 420px; overflow: auto; background: var(--paper); border: 1px solid var(--rule-2); border-radius: 6px; padding: 12px; font: 13px/1.5 var(--mono); }
+
+/* Watches and coverage */
+.lower { border-top: 1px solid var(--rule); background: var(--sheet); }
+.lower .wrap { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 40px; padding-top: 32px; padding-bottom: 48px; }
+@media (max-width: 900px) { .lower .wrap { grid-template-columns: 1fr; } }
+.watch { border: 1px solid var(--rule); border-radius: 8px; padding: 14px 16px; background: var(--paper); }
+.watch + .watch { margin-top: 12px; }
+.watch-top { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; align-items: baseline; }
+.watch-name { font-weight: 700; font-size: 17px; }
+.watch-meta { font-size: 14px; color: var(--ink-2); margin: 4px 0 10px; }
+.watch-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.watch-out { margin-top: 10px; font-size: 14px; }
+.event { padding: 8px 0; border-top: 1px solid var(--rule-2); }
+.event strong.critical { color: var(--red); }
+.event strong.warning { color: var(--ochre); }
+.event strong.info { color: var(--ink-2); }
+.coverage { list-style: none; padding: 0; margin: 0; display: grid; gap: 12px; }
+.coverage li { font-size: 14px; color: var(--ink-2); }
+.coverage b { color: var(--ink); display: block; font-size: 15px; }
+footer { padding: 24px 0 40px; color: var(--ink-3); font-size: 13px; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+</style>
+</head>
+<body>
+<header class="masthead">
+  <div class="wrap">
+    <a class="brand" href="/" aria-label="TinyVerify home"><span class="brand-mark" aria-hidden="true"></span>TinyVerify</a>
+    <span class="tagline">Check a person or business on the official register, then watch the record for changes.</span>
+    <label class="token" title="Only needed if API_TOKEN is set on the server">
+      API token
+      <input type="password" id="token" autocomplete="off" placeholder="not set">
+    </label>
+  </div>
+</header>
+
+<main>
+  <div class="wrap">
+    <section class="side" aria-labelledby="lookup-title">
+      <h1 id="lookup-title">Look up a record</h1>
+      <p class="lede">TinyVerify finds the official register for the place, reads the record live, and shows the lines it relied on.</p>
+      <form id="lookup" novalidate>
+        <label class="field">Name
+          <input type="text" name="name" required autocomplete="off" placeholder="Tesco PLC">
+        </label>
+        <div class="row2">
+          <label class="field">Record type
+            <input type="text" name="record_type" required list="record-types" autocomplete="off" placeholder="company">
+          </label>
+          <label class="field">Place
+            <input type="text" name="jurisdiction" required list="places" autocomplete="off" placeholder="UK">
+          </label>
+        </div>
+        <label class="field">Registry number <span class="hint">Optional. Gives the exact record instead of a name search.</span>
+          <input type="text" name="licence_number" autocomplete="off" placeholder="00445790">
+        </label>
+        <label class="check">
+          <input type="checkbox" name="allow_discovery" checked>
+          <span>If no built-in register covers the place, look for an official one with TinyFish Search. This uses the Agent and can take a few minutes.</span>
+        </label>
+        <button class="primary" type="submit" id="go">Check the register</button>
+        <p class="status-line" id="status" role="status" aria-live="polite"></p>
+      </form>
+      <div class="examples">
+        <p>Try a record from the live tests. These use Fetch only and usually answer in seconds.</p>
+        <ul id="examples"></ul>
+      </div>
+      <datalist id="record-types">
+        <option value="company"><option value="corporation"><option value="business registration"><option value="abn">
+        <option value="medical licence"><option value="contractor licence">
+      </datalist>
+      <datalist id="places">
+        <option value="UK"><option value="England"><option value="Australia"><option value="NSW"><option value="Canada">
+        <option value="Florida"><option value="California"><option value="New York"><option value="CA">
+      </datalist>
+    </section>
+
+    <section id="result" aria-live="polite" aria-labelledby="result-title">
+      <div class="empty">
+        <h2 id="result-title">The record will appear here</h2>
+        <p>Each answer shows:</p>
+        <ol>
+          <li>The outcome, as a stamp: verified, no match, several matches, or register not readable.</li>
+          <li>What the register says: status, number, dates, flags and disciplinary actions.</li>
+          <li>The source page and the exact lines read from it.</li>
+          <li>Every page TinyVerify checked and every TinyFish call it made.</li>
+        </ol>
+      </div>
+    </section>
+  </div>
+</main>
+
+<section class="lower" aria-label="Watched records and coverage">
+  <div class="wrap">
+    <div>
+      <h2>Watched records</h2>
+      <p class="note" id="watch-note">A watch creates a TinyFish Monitor on the record page. Recheck runs it now and compares the record field by field.</p>
+      <div id="watches"><p class="note">Loading watched records.</p></div>
+    </div>
+    <div>
+      <h2>Registers with built-in support</h2>
+      <ul class="coverage" id="coverage"><li>Loading.</li></ul>
+      <p class="note">Other places: TinyFish Search looks for an official government register and the Agent reads it.</p>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">TinyVerify reads official registers through TinyFish Fetch, Agent, Search and Monitor. Results come from the live page at the time shown on each record.</div>
+</footer>
+
+<script>
+"use strict";
+const EXAMPLES = [
+  { label: "Tesco PLC, UK, by company number", name: "Tesco PLC", record_type: "company", jurisdiction: "UK", licence_number: "00445790" },
+  { label: "Rolls-Royce Holdings plc, England, by name", name: "Rolls-Royce Holdings plc", record_type: "company", jurisdiction: "England" },
+  { label: "Woolworths Group Limited, Australia, by ABN", name: "Woolworths Group Limited", record_type: "abn", jurisdiction: "Australia", licence_number: "88 000 014 675" },
+  { label: "Canadian National Railway Company, Canada", name: "Canadian National Railway Company", record_type: "corporation", jurisdiction: "Canada" },
+  { label: "Publix Super Markets, Inc., Florida", name: "Publix Super Markets, Inc.", record_type: "corporation", jurisdiction: "Florida" },
+  { label: "A made-up company, UK (no match)", name: "Zqxv Imaginary Widget Works Ltd", record_type: "company", jurisdiction: "UK" },
+];
+
+const STAMPS = {
+  verified: ["Verified", "verified"],
+  no_match: ["No match", "warn"],
+  multiple_matches: ["Several matches", "warn"],
+  name_mismatch: ["Name differs", "fail"],
+  source_unavailable: ["Not readable", "fail"],
+  unsupported: ["Not covered", "warn"],
+  invalid_input: ["Check request", "fail"],
+};
+const VIA = {
+  tinyfish_fetch: "TinyFish Fetch",
+  tinyfish_agent: "TinyFish Agent",
+  tinyfish_monitor: "TinyFish Monitor",
+  "tinyfish_monitor+fetch": "TinyFish Monitor, then a whole-page Fetch",
+  "tinyfish_monitor+agent": "TinyFish Monitor, then the Agent",
+};
+const MATCH = {
+  identifier: () => "Read by registry number.",
+  exact_name: () => "Exact name match.",
+  fuzzy_name: (m) => "Close name match, score " + Number(m.score).toFixed(2) + ".",
+};
+const EXTRACTION = { deterministic_parser: "parser written for this register", agent_structured_output: "Agent structured output" };
+
+const $ = (sel) => document.querySelector(sel);
+
+/* Build elements with text only. Registry text is never parsed as HTML. */
+function el(tag, attrs, ...kids) {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v === null || v === undefined || v === false) continue;
+    if (k === "class") n.className = v;
+    else if (k === "text") n.textContent = v;
+    else if (k.startsWith("on")) n.addEventListener(k.slice(2), v);
+    else n.setAttribute(k, v === true ? "" : String(v));
+  }
+  for (const kid of kids.flat()) {
+    if (kid === null || kid === undefined || kid === false) continue;
+    n.append(kid instanceof Node ? kid : document.createTextNode(String(kid)));
+  }
+  return n;
+}
+function safeLink(url, text) {
+  try {
+    const u = new URL(url);
+    if (u.protocol === "https:" || u.protocol === "http:") return el("a", { href: u.href, target: "_blank", rel: "noopener noreferrer", text: text || u.href });
+  } catch (e) { /* not a URL */ }
+  return el("span", { text: text || String(url) });
+}
+function when(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return isNaN(d) ? iso : d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+}
+function words(s) { return String(s || "").replace(/_/g, " "); }
+function label(s) { const w = words(s); return w.charAt(0).toUpperCase() + w.slice(1); }
+
+/* Token: kept for this browser tab only. */
+const tokenInput = $("#token");
+try { tokenInput.value = sessionStorage.getItem("tv-token") || ""; } catch (e) { /* storage blocked */ }
+tokenInput.addEventListener("change", () => {
+  try { sessionStorage.setItem("tv-token", tokenInput.value); } catch (e) { /* storage blocked */ }
+  loadWatches();
+  loadCoverage();
+});
+
+async function api(path, options) {
+  const headers = { accept: "application/json" };
+  if (options && options.body) headers["content-type"] = "application/json";
+  if (tokenInput.value) headers.authorization = "Bearer " + tokenInput.value;
+  const res = await fetch(path, { ...(options || {}), headers });
+  let body = null;
+  try { body = await res.json(); } catch (e) { /* not JSON */ }
+  if (res.status === 401) throw new Error("The server needs an API token. Enter the API_TOKEN value from its .env file at the top of the page.");
+  return { status: res.status, body };
+}
+
+/* Lookup */
+const form = $("#lookup");
+const go = $("#go");
+const statusLine = $("#status");
+let lastRequest = null;
+
+function readForm() {
+  const f = new FormData(form);
+  const req = {
+    name: String(f.get("name") || "").trim(),
+    record_type: String(f.get("record_type") || "").trim(),
+    jurisdiction: String(f.get("jurisdiction") || "").trim(),
+    allow_discovery: f.get("allow_discovery") === "on",
+  };
+  const num = String(f.get("licence_number") || "").trim();
+  if (num) req.licence_number = num;
+  return req;
+}
+
+form.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const req = readForm();
+  const missing = ["name", "record_type", "jurisdiction"].filter((k) => !req[k]);
+  if (missing.length) {
+    statusLine.textContent = "Fill in " + missing.map((k) => ({ name: "the name", record_type: "the record type", jurisdiction: "the place" })[k]).join(" and ") + ".";
+    form.querySelector('[name="' + missing[0] + '"]').focus();
+    return;
+  }
+  lastRequest = req;
+  go.disabled = true;
+  go.textContent = "Checking the register";
+  const started = Date.now();
+  const tick = () => {
+    const s = Math.round((Date.now() - started) / 1000);
+    statusLine.textContent = s < 20 ? "Reading the official register, " + s + " s." : "Still working, " + s + " s. A page that needs the Agent can take up to five minutes.";
+  };
+  tick();
+  const timer = setInterval(tick, 1000);
+  try {
+    const { status, body } = await api("/verify", { method: "POST", body: JSON.stringify(req) });
+    if (!body || !body.outcome) throw new Error("The server answered " + status + " without a result.");
+    renderResult(body, req, true);
+    statusLine.textContent = "Answered in " + Math.round((Date.now() - started) / 1000) + " s.";
+  } catch (err) {
+    showError(err);
+    statusLine.textContent = "";
+  } finally {
+    clearInterval(timer);
+    go.disabled = false;
+    go.textContent = "Check the register";
+  }
+});
+
+function checkNumber(id) {
+  form.elements.licence_number.value = id;
+  form.requestSubmit();
+}
+function fillExample(x) {
+  for (const k of ["name", "record_type", "jurisdiction", "licence_number"]) form.elements[k].value = x[k] || "";
+  form.requestSubmit();
+}
+const exList = $("#examples");
+for (const x of EXAMPLES) exList.append(el("li", {}, el("button", { type: "button", class: "quiet", text: x.label, onclick: () => fillExample(x) })));
+
+function showError(err) {
+  const out = $("#result");
+  out.replaceChildren(el("div", { class: "empty" }, el("h2", { text: "The check did not finish" }), el("p", { text: err.message || String(err) })));
+}
+
+/* Result */
+function stampFor(outcome, extra) {
+  const [label, cls] = STAMPS[outcome] || [words(outcome), "warn"];
+  return el("div", { class: "stamp " + cls + " landed", role: "img", "aria-label": "Outcome: " + label }, label, extra ? el("small", { text: extra }) : null);
+}
+function statusClass(norm) {
+  if (norm === "active") return "active";
+  if (["dissolved", "cancelled", "revoked", "suspended", "expired", "inactive", "insolvency", "not_registered"].includes(norm)) return "bad";
+  return "mid";
+}
+
+function renderResult(r, req, animate) {
+  const out = $("#result");
+  const parts = [];
+  if (r.warnings && r.warnings.length) parts.push(el("ul", { class: "warnings", "aria-label": "Warnings" }, r.warnings.map((w) => el("li", { text: w }))));
+
+  if (r.records && r.records.length) {
+    r.records.forEach((rec, i) => parts.push(renderRecord(rec, r, req, i === 0)));
+  } else {
+    const head = el("div", { class: "extract-head" },
+      el("div", {},
+        el("p", { class: "issuer", text: "Request: " + [req.name, req.record_type, req.jurisdiction].filter(Boolean).join(", ") }),
+        el("p", { class: "subject", text: req.name }),
+        el("p", { class: "message", text: r.message })),
+      stampFor(r.outcome));
+    const box = el("article", { class: "extract" }, head);
+    if (r.candidates && r.candidates.length) box.append(candidateSection(r));
+    box.append(...checkedSections(r));
+    parts.push(box);
+  }
+  out.replaceChildren(...parts);
+  if (!animate) out.querySelectorAll(".stamp").forEach((s) => s.classList.remove("landed"));
+  out.querySelector(".extract")?.scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "nearest" });
+}
+
+function renderRecord(rec, r, req, first) {
+  const st = rec.status || {};
+  const head = el("div", { class: "extract-head" },
+    el("div", {},
+      el("p", { class: "issuer", text: "Extract from " + rec.registry.name + ", " + rec.registry.authority }),
+      el("h2", { class: "subject", id: first ? "result-title" : null, text: rec.subject.name }),
+      first ? el("p", { class: "message", text: r.message }) : null),
+    stampFor(first ? r.outcome : "verified", rec.match && rec.match.method === "identifier" ? "by number" : rec.match ? "by name" : null));
+
+  const fields = el("dl", { class: "fields" });
+  const add = (term, ...value) => { fields.append(el("dt", { text: term }), el("dd", {}, ...value)); };
+  const flagged = (rec.compliance_flags || []).length + (rec.disciplinary_actions || []).length > 0;
+  const tone = statusClass(st.normalized) === "active" && flagged ? "mid" : statusClass(st.normalized);
+  add("Status", el("span", { class: "status-word " + tone, text: st.raw || words(st.normalized) }),
+    st.normalized && st.raw && st.raw.toLowerCase() !== st.normalized ? el("span", { class: "note", text: "  (" + words(st.normalized) + ")" }) : null,
+    st.effective_date ? el("span", { class: "note", text: "  since " + st.effective_date }) : null);
+  if (rec.licence_number) add("Registry number", el("span", { class: "lit", text: rec.licence_number }));
+  for (const [k, v] of Object.entries(rec.identifiers || {})) if (v && v !== rec.licence_number) add(label(k), el("span", { class: "lit", text: v }));
+  if (rec.issue_date) add("Registered or issued", rec.issue_date);
+  add("Expiry", rec.expiry_date || rec.expiry_note || "Not stated");
+  if (rec.renewal_due_date) add("Renewal due", rec.renewal_due_date);
+  for (const [k, v] of Object.entries(rec.details || {})) {
+    const text = Array.isArray(v) ? v.filter(Boolean).join("; ") : v;
+    if (text !== null && text !== undefined && text !== "") add(label(k), String(text));
+  }
+  add("Match", rec.match ? MATCH[rec.match.method](rec.match) + (rec.match.name_matches_request ? "" : " The name differs from the request.") : "Not stated");
+
+  const box = el("article", { class: "extract" }, head, fields);
+
+  const flags = rec.compliance_flags || [];
+  const actions = rec.disciplinary_actions || [];
+  const fl = el("div", { class: "section" }, el("h3", { text: "Compliance flags and disciplinary actions" }));
+  if (!flags.length && !actions.length) {
+    fl.append(el("p", { class: "note", text: "None on the record. " + (rec.disciplinary_note || "") }));
+  }
+  for (const f of flags) fl.append(el("div", { class: "flag" }, el("strong", { text: words(f.code) }), " ", f.description, el("blockquote", { class: "ev", text: f.evidence })));
+  for (const a of actions) fl.append(el("div", { class: "flag critical" }, el("strong", { text: words(a.kind) }), " ", a.description,
+    a.start_date || a.end_date ? el("span", { class: "note", text: " (" + [a.start_date, a.end_date].filter(Boolean).join(" to ") + ")" }) : null,
+    el("blockquote", { class: "ev", text: a.evidence })));
+  box.append(fl);
+
+  const src = rec.source || {};
+  const ev = el("div", { class: "section" }, el("h3", { text: "Lines read from the register" }));
+  for (const line of src.evidence || []) ev.append(el("blockquote", { class: "ev", text: line }));
+  ev.append(el("p", { class: "cite" },
+    "Source: ", safeLink(src.url), el("br"),
+    "Read with " + (VIA[src.retrieved_via] || words(src.retrieved_via)) + " and the " + (EXTRACTION[src.extraction] || words(src.extraction)) + ", " + when(rec.checked_at) + ".",
+    src.official_domain ? " Official domain: " + src.official_domain + "." : ""));
+  box.append(ev);
+
+  if (first) {
+    const msg = el("span", { class: "note" });
+    const btn = el("button", { type: "button", class: "secondary", text: "Watch for changes" });
+    btn.addEventListener("click", () => startWatch(req, btn, msg));
+    box.append(el("div", { class: "actions" }, btn, msg));
+    if (r.candidates && r.candidates.length) box.append(candidateSection(r));
+    box.append(...checkedSections(r));
+  }
+  return box;
+}
+
+function candidateSection(r) {
+  const rows = r.candidates.map((c) => el("tr", {},
+    el("td", {}, c.record_url ? safeLink(c.record_url, c.name) : c.name, c.matched_previous_name ? el("span", { class: "note", text: " (previous name)" }) : null),
+    el("td", { class: "lit", text: c.identifier || "" }),
+    el("td", { text: c.status_raw || "" }),
+    el("td", { class: "num", text: Number(c.score).toFixed(2) }),
+    el("td", {}, c.identifier && lastRequest ? el("button", { type: "button", class: "quiet", text: "Check this number", onclick: () => checkNumber(c.identifier) }) : null)));
+  return el("details", { open: r.outcome === "multiple_matches" ? true : null },
+    el("summary", { text: "Other names the register returned (" + r.candidates.length + ")" }),
+    el("div", { class: "inner scroll" },
+      el("table", {}, el("thead", {}, el("tr", {}, el("th", { text: "Name" }), el("th", { text: "Number" }), el("th", { text: "Status" }), el("th", { class: "num", text: "Score" }), el("th", {}, el("span", { class: "sr", text: "Action" })))), el("tbody", {}, rows))));
+}
+
+function checkedSections(r) {
+  const checks = (r.sources_checked || []).map((s) => el("tr", {},
+    el("td", { text: s.step }),
+    el("td", { text: VIA[s.method] || words(s.method) }),
+    el("td", {}, s.url ? safeLink(s.url, s.registry_name) : s.registry_name),
+    el("td", { text: words(s.outcome) + (s.result_count !== null && s.result_count !== undefined ? ", " + s.result_count : "") }),
+    el("td", { class: "note", text: s.detail || "" })));
+  const calls = (r.tinyfish_calls || []).map((c) => el("tr", {},
+    el("td", { text: c.endpoint + " " + c.action }),
+    el("td", {}, /^https?:/.test(c.target) ? safeLink(c.target) : el("span", { text: c.target })),
+    el("td", { text: c.ok ? "ok" : "failed" }),
+    el("td", { class: "num", text: (c.ms / 1000).toFixed(1) + " s" })));
+  const json = JSON.stringify(r, null, 2);
+  const copy = el("button", { type: "button", class: "quiet", text: "Copy JSON" });
+  copy.addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText(json); copy.textContent = "Copied"; } catch (e) { copy.textContent = "Copy failed, select the text instead"; }
+  });
+  return [
+    el("details", {}, el("summary", { text: "Pages checked (" + checks.length + ")" }),
+      el("div", { class: "inner scroll" }, el("table", {}, el("thead", {}, el("tr", {}, ["Step", "Read with", "Page", "Result", "Detail"].map((h) => el("th", { text: h })))), el("tbody", {}, checks)))),
+    el("details", {}, el("summary", { text: "TinyFish calls (" + calls.length + ")" }),
+      el("div", { class: "inner scroll" }, el("table", {}, el("thead", {}, el("tr", {}, el("th", { text: "Call" }), el("th", { text: "Target" }), el("th", { text: "Result" }), el("th", { class: "num", text: "Time" }))), el("tbody", {}, calls)))),
+    el("details", {}, el("summary", { text: "Full JSON result" }), el("div", { class: "inner" }, copy, el("pre", { class: "raw", text: json }))),
+  ];
+}
+
+/* Watches */
+async function startWatch(req, btn, msg) {
+  btn.disabled = true;
+  btn.textContent = "Creating the watch";
+  msg.textContent = "Checking the record again, then creating a TinyFish Monitor.";
+  try {
+    const { status, body } = await api("/watch", { method: "POST", body: JSON.stringify({ request: req }) });
+    if (status === 201 && body && body.watch) {
+      btn.textContent = "Watching";
+      const notes = (body.warnings || []).join(" ");
+      msg.textContent = "Watch created." + (notes ? " " + notes : "") + (/recheck/.test(notes) ? " On this page, use Recheck now under Watched records." : "");
+      loadWatches();
+    } else {
+      btn.disabled = false;
+      btn.textContent = "Watch for changes";
+      msg.textContent = (body && (body.message || body.error)) || "The watch was not created (" + status + ").";
+    }
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = "Watch for changes";
+    msg.textContent = err.message;
+  }
+}
+
+async function loadWatches() {
+  const box = $("#watches");
+  try {
+    const { status, body } = await api("/watches");
+    if (status !== 200 || !body) throw new Error("Could not load watches (" + status + ").");
+    const list = (body.watches || []).filter((w) => w.state === "active");
+    if (!list.length) {
+      box.replaceChildren(el("p", { class: "note", text: "No records are watched yet. Check a record, then choose Watch for changes." }));
+      return;
+    }
+    box.replaceChildren(...list.map(watchCard));
+  } catch (err) {
+    box.replaceChildren(el("p", { class: "note", text: err.message }));
+  }
+}
+
+function watchCard(w) {
+  const out = el("div", { class: "watch-out", "aria-live": "polite" });
+  const recheck = el("button", { type: "button", class: "secondary", text: "Recheck now" });
+  const stop = el("button", { type: "button", class: "secondary danger", text: "Stop watching" });
+  const history = el("button", { type: "button", class: "quiet", text: "Show changes" });
+  const statusOf = (rec) => (rec && rec.status ? rec.status.raw || words(rec.status.normalized) : "unknown");
+  const lastStatus = el("span", { class: "note", text: "Last status: " + statusOf(w.latest) });
+  const lastChecked = el("span", { text: "Last checked " + when(w.last_checked_at) + ". " });
+
+  recheck.addEventListener("click", async () => {
+    recheck.disabled = true;
+    recheck.textContent = "Rechecking";
+    out.replaceChildren("Running the TinyFish Monitor now.");
+    try {
+      const { status, body } = await api("/watches/" + encodeURIComponent(w.id) + "/recheck", { method: "POST" });
+      if (status !== 200 || !body) throw new Error((body && (body.message || body.error)) || "Recheck failed (" + status + ").");
+      const events = body.events || [];
+      out.replaceChildren(
+        el("div", {}, "Read with " + (VIA[body.read_via] || words(body.read_via)) + ". ",
+          events.length ? el("strong", { text: events.length + (events.length === 1 ? " change found." : " changes found.") }) : "No change to the record."),
+        ...events.map(eventRow));
+      // Update this card in place, so the result above stays on screen.
+      if (body.record) {
+        lastStatus.textContent = "Last status: " + statusOf(body.record);
+      }
+      lastChecked.textContent = "Last checked " + when(new Date().toISOString()) + ". ";
+    } catch (err) {
+      out.replaceChildren(err.message);
+    } finally {
+      recheck.disabled = false;
+      recheck.textContent = "Recheck now";
+    }
+  });
+
+  let armed = false;
+  stop.addEventListener("click", async () => {
+    if (!armed) { armed = true; stop.textContent = "Confirm: stop and delete the Monitor"; return; }
+    stop.disabled = true;
+    try {
+      const { status, body } = await api("/watches/" + encodeURIComponent(w.id), { method: "DELETE" });
+      if (status !== 200) throw new Error((body && (body.message || body.error)) || "Could not stop the watch (" + status + ").");
+      loadWatches();
+    } catch (err) {
+      out.replaceChildren(err.message);
+      stop.disabled = false;
+    }
+  });
+
+  history.addEventListener("click", async () => {
+    try {
+      const { status, body } = await api("/watches/" + encodeURIComponent(w.id));
+      if (status !== 200 || !body) throw new Error("Could not load changes (" + status + ").");
+      const events = body.events || [];
+      out.replaceChildren(events.length ? el("div", {}, ...events.slice(-10).reverse().map(eventRow)) : "No changes recorded since the watch started.");
+    } catch (err) {
+      out.replaceChildren(err.message);
+    }
+  });
+
+  return el("div", { class: "watch" },
+    el("div", { class: "watch-top" }, el("span", { class: "watch-name", text: w.subject_name || w.identifier || w.record_url }), lastStatus),
+    el("p", { class: "watch-meta" }, w.identifier ? "Number " + w.identifier + ". " : "", lastChecked, safeLink(w.record_url, "Record page")),
+    el("div", { class: "watch-actions" }, recheck, history, stop),
+    out);
+}
+
+function eventRow(e) {
+  return el("div", { class: "event" },
+    el("strong", { class: e.severity, text: words(e.type) }), " ", e.message,
+    el("div", { class: "note", text: when(e.detected_at) + ", read with " + (VIA[e.read_via] || words(e.read_via)) }));
+}
+
+/* Coverage */
+async function loadCoverage() {
+  const box = $("#coverage");
+  try {
+    const { status, body } = await api("/registries");
+    if (status !== 200 || !body) throw new Error("Could not load the register list (" + status + ").");
+    box.replaceChildren(...(body.registries || []).map((g) => el("li", {},
+      el("b", { text: g.name }),
+      [g.region, g.country].filter(Boolean).join(", ") + ". Number: " + g.identifier.label + ", for example ",
+      /^[A-Z0-9][A-Z0-9 -]*$/.test(g.identifier.example) ? el("span", { class: "lit", text: g.identifier.example }) : g.identifier.example, ".")));
+  } catch (err) {
+    box.replaceChildren(el("li", { text: err.message }));
+  }
+}
+
+loadWatches();
+loadCoverage();
+</script>
+</body>
+</html>
